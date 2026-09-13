@@ -80,10 +80,11 @@ struct OperationBar: View {
         let posMs  = playerManager.currentTimeMs
         let isNear = store.selectedClip?.splitPointNear(positionMs: posMs) != nil
         // "minus.bubble"はSF Symbolsに存在しない名前で、指定すると何も描画されず
-        // アイコンが消えて見える不具合になっていた。塗り有無で状態を分ける
-        // "plus.bubble.fill"（実在確認済み）に差し替えている。
+        // アイコンが消えて見える不具合になっていた。"minus.bubble"の組み合わせ自体が
+        // SF Symbolsに存在しないため、マイナス表記が要件なら"minus.circle.fill"
+        // （実在確認済み）を使う。
         return CompactIconButton(
-            systemImage: isNear ? "plus.bubble.fill" : "plus.bubble",
+            systemImage: isNear ? "minus.circle.fill" : "plus.bubble",
             contentDescription: isNear ? "この区切りを解除" : "ここでひとことを分割",
             enabled: store.selectedIndex != nil,
             tint: AppColors.splitLine(colorScheme)
