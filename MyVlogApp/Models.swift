@@ -18,6 +18,62 @@ struct VlogClip: Identifiable, Codable, Equatable {
     var texts: [TextSegment]
     var startMs: Int64
     var endMs: Int64
+    var isMuted: Bool = false   // このクリップの音声を書き出しで無音にするか（Android: VlogModels.kt isMuted）
+
+    /// タイムライン全体のミュート状態と合わせて、書き出し時に無音にすべきか判定する
+    func isSilentInExport(timelineMuted: Bool) -> Bool { isMuted || timelineMuted }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, assetIdentifier, fileURL, relativeFilePath, timeText, dateText
+        case durationMs, width, height, texts, startMs, endMs, isMuted
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id               = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        assetIdentifier  = try c.decodeIfPresent(String.self, forKey: .assetIdentifier)
+        fileURL          = try c.decodeIfPresent(URL.self, forKey: .fileURL)
+        relativeFilePath = try c.decodeIfPresent(String.self, forKey: .relativeFilePath)
+        timeText         = try c.decode(String.self, forKey: .timeText)
+        dateText         = try c.decode(String.self, forKey: .dateText)
+        durationMs       = try c.decode(Int64.self, forKey: .durationMs)
+        width            = try c.decode(Int.self, forKey: .width)
+        height           = try c.decode(Int.self, forKey: .height)
+        texts            = try c.decode([TextSegment].self, forKey: .texts)
+        startMs          = try c.decode(Int64.self, forKey: .startMs)
+        endMs            = try c.decode(Int64.self, forKey: .endMs)
+        isMuted          = try c.decodeIfPresent(Bool.self, forKey: .isMuted) ?? false
+    }
+
+    init(
+        id: UUID = UUID(),
+        assetIdentifier: String? = nil,
+        fileURL: URL? = nil,
+        relativeFilePath: String? = nil,
+        timeText: String,
+        dateText: String,
+        durationMs: Int64,
+        width: Int,
+        height: Int,
+        texts: [TextSegment],
+        startMs: Int64,
+        endMs: Int64,
+        isMuted: Bool = false
+    ) {
+        self.id = id
+        self.assetIdentifier = assetIdentifier
+        self.fileURL = fileURL
+        self.relativeFilePath = relativeFilePath
+        self.timeText = timeText
+        self.dateText = dateText
+        self.durationMs = durationMs
+        self.width = width
+        self.height = height
+        self.texts = texts
+        self.startMs = startMs
+        self.endMs = endMs
+        self.isMuted = isMuted
+    }
 
     var resolvedFileURL: URL? {
         if let rel = relativeFilePath {

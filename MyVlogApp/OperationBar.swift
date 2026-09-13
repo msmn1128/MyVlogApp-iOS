@@ -67,6 +67,17 @@ struct OperationBar: View {
 
                 groupDivider
 
+                Button {
+                    store.toggleTimelineMuted()
+                } label: {
+                    barLabel(systemImage: store.timelineMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
+                             label: "ミュート")
+                }
+                .foregroundStyle(store.timelineMuted ? .red : Color.secondary)
+                .frame(maxWidth: .infinity)
+
+                groupDivider
+
                 barButton(systemImage: "arrow.left", label: "前へ", enabled: canMoveLeft) {
                     playerManager.pause(); store.moveClipLeft()
                 }

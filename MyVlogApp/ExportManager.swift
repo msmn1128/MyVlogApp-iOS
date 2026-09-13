@@ -13,12 +13,12 @@ class ExportManager: ObservableObject {
 
     private var exportTask: Task<Void, Never>?
 
-    func startExport(clips: [VlogClip]) {
+    func startExport(clips: [VlogClip], timelineMuted: Bool = false) {
         guard !isExporting, !clips.isEmpty else { return }
         isExporting = true
         progress    = 0
         message     = "タイトルを作成中..."
-        exportTask  = Task { await runExport(clips: clips) }
+        exportTask  = Task { await runExport(clips: clips, timelineMuted: timelineMuted) }
     }
 
     func cancel() {
@@ -28,7 +28,7 @@ class ExportManager: ObservableObject {
 
     // MARK: - Main pipeline
 
-    private func runExport(clips: [VlogClip]) async {
+    private func runExport(clips: [VlogClip], timelineMuted: Bool) async {
         var tempFiles: [URL] = []
         do {
             update("タイトルを作成中...")
@@ -39,7 +39,7 @@ class ExportManager: ObservableObject {
             var clipURLs: [URL] = [titleURL]
             for (i, clip) in clips.enumerated() {
                 update("クリップ \(i + 1)/\(clips.count) を処理中...")
-                let url = try await processClip(clip)
+                let url = try await processClip(clip, silent: clip.isSilentInExport(timelineMuted: timelineMuted))
                 clipURLs.append(url)
                 tempFiles.append(url)
                 progress = Double(i + 1) / Double(clips.count + 2)
@@ -137,8 +137,9 @@ class ExportManager: ObservableObject {
 
             guard alpha > 0 else { return }
 
-            // Line 1: "Vlog."
-            let vlogFont = UIFont.systemFont(ofSize: VlogLayout.titleVlogFontSize, weight: .regular)
+            // Line 1: "Vlog."（Android: TITLE_FONT_PT / TITLE_Y_OFFSET_PT、中央から-70ptずらす）
+            let vlogFont = UIFont(name: VlogFonts.logoTypeName, size: VlogLayout.titleVlogFontSize)
+                ?? UIFont.systemFont(ofSize: VlogLayout.titleVlogFontSize, weight: .regular)
             let vlogAttrs: [NSAttributedString.Key: Any] = [
                 .font:            vlogFont,
                 .foregroundColor: UIColor.white.withAlphaComponent(alpha)
@@ -146,8 +147,9 @@ class ExportManager: ObservableObject {
             let vlogStr = NSAttributedString(string: "Vlog.", attributes: vlogAttrs)
             let vlogSize = vlogStr.size()
 
-            // Line 2: dateText (e.g. "2026/08/28")
-            let dateFont = UIFont.systemFont(ofSize: VlogLayout.titleDateFontSize, weight: .light)
+            // Line 2: dateText（Android: TITLE_DATE_FONT_PT / TITLE_DATE_Y_OFFSET_PT、+80ptずらす）
+            let dateFont = UIFont(name: VlogFonts.timeFontName, size: VlogLayout.titleDateFontSize)
+                ?? UIFont.systemFont(ofSize: VlogLayout.titleDateFontSize, weight: .light)
             let dateAttrs: [NSAttributedString.Key: Any] = [
                 .font:            dateFont,
                 .foregroundColor: UIColor.white.withAlphaComponent(alpha)
@@ -155,27 +157,23 @@ class ExportManager: ObservableObject {
             let dateStr = NSAttributedString(string: dateText, attributes: dateAttrs)
             let dateSize = dateStr.size()
 
-            let spacing = VlogLayout.titleSpacing
-            let totalBlockHeight = vlogSize.height + spacing + dateSize.height
-            let startY = (size.height - totalBlockHeight) / 2
+            // Android centeredY(offsetPt) = (h-text_h)/2 + offsetPt をそのまま踏襲
+            let vlogY = (size.height - vlogSize.height) / 2 + VlogLayout.titleVlogYOffset
+            let dateY = (size.height - dateSize.height) / 2 + VlogLayout.titleDateYOffset
 
-            // Draw Line 1: "Vlog."
-            let vlogRect = CGRect(
+            vlogStr.draw(in: CGRect(
                 x: (size.width - vlogSize.width) / 2,
-                y: startY,
+                y: vlogY,
                 width: vlogSize.width,
                 height: vlogSize.height
-            )
-            vlogStr.draw(in: vlogRect)
+            ))
 
-            // Draw Line 2: Date
-            let dateRect = CGRect(
+            dateStr.draw(in: CGRect(
                 x: (size.width - dateSize.width) / 2,
-                y: startY + vlogSize.height + spacing,
+                y: dateY,
                 width: dateSize.width,
                 height: dateSize.height
-            )
-            dateStr.draw(in: dateRect)
+            ))
         }
 
         if let cgImage = image.cgImage {
@@ -187,7 +185,7 @@ class ExportManager: ObservableObject {
 
     // MARK: - Per-clip processing
 
-    private func processClip(_ clip: VlogClip) async throws -> URL {
+    private func processClip(_ clip: VlogClip, silent: Bool) async throws -> URL {
         let asset   = try await AssetLoader.shared.load(clip: clip)
         let outURL  = tempURL("clip_\(clip.id.uuidString)")
         let canvas  = CGSize(width: 1920, height: 1080)
@@ -206,9 +204,11 @@ class ExportManager: ObservableObject {
         let compVideo = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)!
         try compVideo.insertTimeRange(trimRange, of: srcVideo, at: .zero)
 
+        var compAudio: AVMutableCompositionTrack?
         if let srcAudio = audioTracks.first {
-            let compAudio = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)!
-            try? compAudio.insertTimeRange(trimRange, of: srcAudio, at: .zero)
+            let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)!
+            try? track.insertTimeRange(trimRange, of: srcAudio, at: .zero)
+            compAudio = track
         }
 
         // Video composition for scaling + text overlay
@@ -225,6 +225,15 @@ class ExportManager: ObservableObject {
         }
         session.videoComposition   = videoComp
         session.shouldOptimizeForNetworkUse = true
+
+        // クリップ個別またはタイムライン全体のミュート（Android: isSilentInExport）を音量0で反映
+        if silent, let compAudio {
+            let params = AVMutableAudioMixInputParameters(track: compAudio)
+            params.setVolume(0, at: .zero)
+            let mix = AVMutableAudioMix()
+            mix.inputParameters = [params]
+            session.audioMix = mix
+        }
 
         try await session.export(to: outURL, as: .mov)
         return outURL
@@ -295,7 +304,8 @@ class ExportManager: ObservableObject {
 
         let spans  = clip.visibleTextSpans()   // relative to trimStart
         let lineH  = VlogLayout.hitokoroFontSize + VlogLayout.hitokoroLineGap
-        let font   = UIFont.boldSystemFont(ofSize: VlogLayout.hitokoroFontSize)
+        let font   = UIFont(name: VlogFonts.logoTypeName, size: VlogLayout.hitokoroFontSize)
+            ?? UIFont.boldSystemFont(ofSize: VlogLayout.hitokoroFontSize)
 
         for span in spans {
             let startSec = Double(span.spanStart) / 1000.0
@@ -323,7 +333,8 @@ class ExportManager: ObservableObject {
         }
 
         // Timestamp: 上下中央・右端 (right-aligned, vertically centered)
-        let tsFont = UIFont.monospacedSystemFont(ofSize: VlogLayout.timestampFontSize, weight: .medium)
+        let tsFont = UIFont(name: VlogFonts.timeFontName, size: VlogLayout.timestampFontSize)
+            ?? UIFont.monospacedSystemFont(ofSize: VlogLayout.timestampFontSize, weight: .medium)
         let tsTL   = CATextLayer()
         tsTL.string          = clip.timeText
         tsTL.font            = tsFont

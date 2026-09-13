@@ -31,8 +31,9 @@ enum VlogLayout {
     static let hitokoroLineGap:   CGFloat = 10
     static let timestampFontSize: CGFloat = 60
     static let timestampRightPad: CGFloat = 40
-    static let titleVlogFontSize: CGFloat = 170
-    static let titleDateFontSize: CGFloat = 65
-    static let titleSpacing:      CGFloat = 28
+    static let titleVlogFontSize: CGFloat = 150
+    static let titleDateFontSize: CGFloat = 50
+    static let titleVlogYOffset:  CGFloat = -70
+    static let titleDateYOffset:  CGFloat = 80
     static let titleCardDuration: Double  = 2.0
 }

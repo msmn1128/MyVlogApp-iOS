@@ -13,7 +13,8 @@ struct TimelineView: View {
                     ForEach(Array(store.clips.enumerated()), id: \.element.id) { idx, clip in
                         ClipTile(
                             clip:       clip,
-                            isSelected: idx == store.selectedIndex
+                            isSelected: idx == store.selectedIndex,
+                            onToggleMute: { store.toggleMute(at: idx) }
                         )
                         .id(idx)
                         .onTapGesture {
@@ -34,6 +35,7 @@ struct TimelineView: View {
 private struct ClipTile: View {
     let clip:       VlogClip
     let isSelected: Bool
+    let onToggleMute: () -> Void
 
     @State private var thumbnail: UIImage? = nil
     @Environment(\.colorScheme) var colorScheme
@@ -81,6 +83,19 @@ private struct ClipTile: View {
                     endPoint: .bottom
                 )
             )
+
+            // Mute toggle
+            Button(action: onToggleMute) {
+                Image(systemName: clip.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white)
+                    .padding(4)
+                    .background(clip.isMuted ? Color.red.opacity(0.85) : Color.black.opacity(0.45))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .padding(4)
+            .frame(width: 80, height: 90, alignment: .topLeading)
 
             // Split badge
             if clip.texts.count > 1 {

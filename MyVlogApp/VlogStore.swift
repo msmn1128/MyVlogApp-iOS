@@ -25,6 +25,9 @@ class VlogStore: ObservableObject {
     @Published var isContinuousPlay: Bool
     @Published var savedProjects: [SavedProject] = []
     @Published var excludedCount: Int = 0
+    /// タイムライン全体のミュート。クリップ個別の`isMuted`とは独立していて、
+    /// こちらがonの間はどのクリップも音声が出ない（Android: VlogViewModel.timelineMuted）
+    @Published var timelineMuted: Bool
 
     // MARK: Undo / Redo
     private var undoStack: [UndoEntry] = []
@@ -38,9 +41,11 @@ class VlogStore: ObservableObject {
     private let autoSaveKey     = "vlog_autosave_v1"
     private let savedProjectsKey = "vlog_saved_projects_v1"
     private let continuousPlayKey = "vlog_continuous_play"
+    private let timelineMutedKey  = "vlog_timeline_muted"
 
     init() {
         isContinuousPlay = UserDefaults.standard.bool(forKey: "vlog_continuous_play")
+        timelineMuted    = UserDefaults.standard.bool(forKey: "vlog_timeline_muted")
         loadSavedProjectsFromDefaults()
         Task { await restoreAutoSave() }
     }
@@ -207,6 +212,20 @@ class VlogStore: ObservableObject {
     func toggleContinuousPlay() {
         isContinuousPlay.toggle()
         UserDefaults.standard.set(isContinuousPlay, forKey: continuousPlayKey)
+    }
+
+    // MARK: - Mute
+
+    func toggleTimelineMuted() {
+        timelineMuted.toggle()
+        UserDefaults.standard.set(timelineMuted, forKey: timelineMutedKey)
+    }
+
+    func toggleMute(at index: Int) {
+        guard clips.indices.contains(index) else { return }
+        recordForUndo(tag: "mute:\(index)")
+        clips[index].isMuted.toggle()
+        scheduleAutoSave()
     }
 
     // MARK: - Auto-save

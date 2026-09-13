@@ -86,11 +86,16 @@ struct ContentView: View {
         .onChange(of: store.clips) {
             if store.clips.isEmpty {
                 playerManager.reset()
+            } else {
+                playerManager.applyMuteState(for: store.selectedClip)
             }
+        }
+        .onChange(of: store.timelineMuted) {
+            playerManager.applyMuteState(for: store.selectedClip)
         }
         // Export trigger
         .onReceive(NotificationCenter.default.publisher(for: .startExport)) { _ in
-            exportManager.startExport(clips: store.clips)
+            exportManager.startExport(clips: store.clips, timelineMuted: store.timelineMuted)
         }
         // Photo picker
         .photosPicker(isPresented: $showPhotoPicker, selection: $photoItems,

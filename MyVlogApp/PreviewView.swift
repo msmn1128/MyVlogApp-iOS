@@ -48,8 +48,7 @@ struct PreviewView: View {
             HStack {
                 Spacer()
                 Text(timeText)
-                    .font(.system(size: VlogLayout.timestampFontSize * scale,
-                                  weight: .medium, design: .monospaced))
+                    .font(.custom(VlogFonts.timeFontName, size: VlogLayout.timestampFontSize * scale))
                     .foregroundStyle(.white)
                     .padding(.trailing, VlogLayout.timestampRightPad * scale)
             }
@@ -72,7 +71,7 @@ struct PreviewView: View {
                 let y = startY + CGFloat(idx) * lineHeight + fontSize / 2
                 if !line.isEmpty {
                     Text(line)
-                        .font(.system(size: fontSize, weight: .bold))
+                        .font(.custom(VlogFonts.logoTypeName, size: fontSize))
                         .foregroundStyle(.white)
                         .position(x: canvas.width / 2, y: y)
                 }

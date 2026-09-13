@@ -74,6 +74,7 @@ class VideoPlayerManager: ObservableObject {
             guard !Task.isCancelled else { isLoading = false; return }
             let item = AVPlayerItem(asset: asset)
             player.replaceCurrentItem(with: item)
+            applyMuteState(for: clip)
             seek(to: clip.startMs)
             installBoundaryObserver(endMs: clip.endMs)
             installEndObserver()
@@ -84,6 +85,15 @@ class VideoPlayerManager: ObservableObject {
             print("[VideoPlayerManager] \(error)")
         }
         isLoading = false
+    }
+
+    // MARK: - Mute
+
+    /// クリップ個別のミュートとタイムライン全体のミュートを合わせて音量に反映する
+    /// （Android: VlogViewModel.updatePlayerVolume相当）
+    func applyMuteState(for clip: VlogClip?) {
+        let clipMuted = clip?.isMuted ?? false
+        player.volume = (store?.timelineMuted ?? false) || clipMuted ? 0 : 1
     }
 
     // MARK: - Playback controls
