@@ -31,6 +31,12 @@ struct TimelineView: View {
                 .padding(.vertical, 24)
             } else {
                 clipRow
+
+                WaveformView()
+                    .environmentObject(store)
+                    .environmentObject(playerManager)
+                    .frame(height: 95)
+                    .padding(.top, 8)
             }
         }
         .padding(12)

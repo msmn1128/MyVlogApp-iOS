@@ -141,12 +141,6 @@ struct ContentView: View {
                 .environmentObject(playerManager)
                 .padding(.horizontal, 12)
 
-            WaveformView()
-                .environmentObject(store)
-                .environmentObject(playerManager)
-                .frame(height: 95)
-                .padding(.horizontal, 12)
-
             TextInputView()
                 .environmentObject(store)
                 .environmentObject(playerManager)
@@ -182,11 +176,6 @@ struct ContentView: View {
                 TimelineView()
                     .environmentObject(store)
                     .environmentObject(playerManager)
-
-                WaveformView()
-                    .environmentObject(store)
-                    .environmentObject(playerManager)
-                    .frame(height: 90)
 
                 TextInputView()
                     .environmentObject(store)

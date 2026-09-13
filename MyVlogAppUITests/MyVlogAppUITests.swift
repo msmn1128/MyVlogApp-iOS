@@ -41,4 +41,35 @@ final class MyVlogAppUITests: XCTestCase {
         attachment.name = "home_screen"
         add(attachment)
     }
+
+    /// TEMP QA: キーボードのスワイプダウンで閉じるかどうかを確認する。
+    @MainActor
+    func testKeyboardSwipeDown() throws {
+        let app = XCUIApplication()
+        app.launch()
+
+        let textView = app.textViews.firstMatch
+        XCTAssertTrue(textView.waitForExistence(timeout: 10))
+        textView.tap()
+
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "キーボードが開かなかった")
+
+        let before = app.screenshot()
+        add(XCTAttachment(screenshot: before))
+
+        // キーボード上端からスワイプダウン
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.72))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.98))
+        start.press(forDuration: 0.05, thenDragTo: end)
+
+        sleep(1)
+        let after = app.screenshot()
+        let attachment = XCTAttachment(screenshot: after)
+        attachment.lifetime = .keepAlways
+        attachment.name = "after_swipe_down"
+        add(attachment)
+
+        // キーボードがまだあるかどうかをログに残す（成否はスクリーンショットで人間が判断）
+        print("keyboard exists after swipe: \(app.keyboards.firstMatch.exists)")
+    }
 }
