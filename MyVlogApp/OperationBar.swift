@@ -93,13 +93,17 @@ struct OperationBar: View {
             Group {
                 if isNear {
                     // "minus.bubble"はSF Symbolsに存在しないため、"plus.bubble"と
-                    // 同じ吹き出しの中身だけマイナスに差し替えた自作アイコンにしている
+                    // 同じ吹き出しの中身だけマイナスに差し替えた自作アイコンにしている。
+                    // GeometryReaderで組んでいるため、ここで明示的にグリフサイズへ
+                    // 縮めないとボタンの当たり判定いっぱい（48pt）に広がってしまう。
                     BubbleGlyphIcon(symbol: .minus)
+                        .frame(width: VlogLayout.toolbarIconSize * 0.82,
+                               height: VlogLayout.toolbarIconSize * 0.82)
                 } else {
                     Image(systemName: "plus.bubble")
+                        .font(.system(size: VlogLayout.toolbarIconSize * 0.82, weight: .regular))
                 }
             }
-            .font(.system(size: VlogLayout.toolbarIconSize * 0.82, weight: .regular))
             .foregroundStyle(tint.opacity(enabled ? 1 : 0.38))
             .frame(width: VlogLayout.toolbarButtonSize, height: VlogLayout.toolbarButtonSize)
         }
