@@ -94,11 +94,7 @@ struct OperationBar: View {
                 if isNear {
                     // "minus.bubble"はSF Symbolsに存在しないため、"plus.bubble"と
                     // 同じ吹き出しの中身だけマイナスに差し替えた自作アイコンにしている。
-                    // GeometryReaderで組んでいるため、ここで明示的にグリフサイズへ
-                    // 縮めないとボタンの当たり判定いっぱい（48pt）に広がってしまう。
-                    BubbleGlyphIcon(symbol: .minus)
-                        .frame(width: VlogLayout.toolbarIconSize * 0.82,
-                               height: VlogLayout.toolbarIconSize * 0.82)
+                    BubbleGlyphIcon(symbol: .minus, pointSize: VlogLayout.toolbarIconSize * 0.82)
                 } else {
                     Image(systemName: "plus.bubble")
                         .font(.system(size: VlogLayout.toolbarIconSize * 0.82, weight: .regular))
@@ -206,26 +202,24 @@ private struct TrimPresetButton: View {
 }
 
 /// SF Symbolsに"minus.bubble"が無いため、"bubble"（吹き出し輪郭）に任意の記号を
-/// 重ねて自作する。plus.bubbleと見た目・線の太さを揃えるため同じフォントサイズ系で描く。
+/// 重ねて自作する。他のアイコンと同じ`.font(size:)`方式で"bubble"を描き、その上に
+/// マイナスのバーを重ねることで、plus.bubbleと見た目のメトリクスを一致させている
+/// （resizable().scaledToFit()でフレーム全体を埋める方式だと、SF Symbol側の
+/// 内部余白ぶんだけ他のアイコンより微妙に大小がずれてしまうため使わない）。
 private struct BubbleGlyphIcon: View {
     enum Symbol { case minus }
     let symbol: Symbol
+    var pointSize: CGFloat
 
     var body: some View {
-        GeometryReader { geo in
-            let size = min(geo.size.width, geo.size.height)
-            ZStack {
-                Image(systemName: "bubble")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: size, height: size)
+        Image(systemName: "bubble")
+            .font(.system(size: pointSize, weight: .regular))
+            .overlay(
                 Rectangle()
-                    .frame(width: size * 0.34, height: size * 0.09)
+                    .frame(width: pointSize * 0.34, height: pointSize * 0.09)
                     // 吹き出しの尻尾ぶん下寄りな見た目にならないよう、本体中心を少し上へ
-                    .offset(y: -size * 0.12)
-            }
-        }
-        .aspectRatio(1, contentMode: .fit)
+                    .offset(y: -pointSize * 0.1)
+            )
     }
 }
 
