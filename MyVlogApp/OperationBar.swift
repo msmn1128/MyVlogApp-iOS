@@ -11,70 +11,65 @@ struct OperationBar: View {
     @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
-        HStack(spacing: 0) {
-            // よく使う「分割/解除」がスクロールの先（右端）に埋もれて見つからない、という
-            // 実機での指摘を受け、スクロール領域の外に固定して常に見えるようにしている
-            // （Android版は1本のスクロール行だが、iOSではここだけ画面幅の都合で分けた）。
-            ScrollView(.horizontal, showsIndicators: true) {
-                HStack(spacing: 0) {
-                    let enabled = store.selectedClip != nil
-                    let trimPresetEnabled = enabled && (store.selectedClip?.durationMs ?? 0) > 0
+        ScrollView(.horizontal, showsIndicators: true) {
+            HStack(spacing: 0) {
+                let enabled = store.selectedClip != nil
+                let trimPresetEnabled = enabled && (store.selectedClip?.durationMs ?? 0) > 0
 
-                    CompactIconButton(systemImage: "trash", contentDescription: "選択中のクリップを削除",
-                                       enabled: enabled, tint: AppColors.error(colorScheme)) {
-                        if let i = store.selectedIndex { store.deleteClip(at: i) }
-                    }
-                    CompactIconButton(systemImage: "trash.fill", contentDescription: "すべて削除",
-                                       enabled: !store.clips.isEmpty, tint: AppColors.error(colorScheme)) {
-                        showDeleteAllAlert = true
-                    }
-
-                    divider
-
-                    CompactIconButton(systemImage: "arrow.left", contentDescription: "ひとつ前へ移動",
-                                       enabled: canMoveLeft) {
-                        playerManager.pause(); store.moveClipLeft()
-                    }
-                    CompactIconButton(systemImage: "arrow.right", contentDescription: "ひとつ後ろへ移動",
-                                       enabled: canMoveRight) {
-                        playerManager.pause(); store.moveClipRight()
-                    }
-
-                    divider
-
-                    ToggleIconButton(
-                        systemImage: store.timelineMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
-                        checked: store.timelineMuted,
-                        enabled: !store.clips.isEmpty
-                    ) { store.toggleTimelineMuted() }
-
-                    ToggleIconButton(
-                        systemImage: "play.fill",
-                        checked: store.isContinuousPlay,
-                        enabled: !store.clips.isEmpty
-                    ) { store.toggleContinuousPlay() }
-
-                    divider
-
-                    CompactIconButton(systemImage: "arrow.uturn.backward", contentDescription: "もとに戻す",
-                                       enabled: store.canUndo) { store.undo() }
-                    CompactIconButton(systemImage: "arrow.uturn.forward", contentDescription: "やり直す",
-                                       enabled: store.canRedo) { store.redo() }
-
-                    divider
-
-                    TrimPresetButton(label: "2s", enabled: trimPresetEnabled) {
-                        store.applyTrimPreset(lengthMs: 2_000)
-                    }
-                    TrimPresetButton(label: "4s", enabled: trimPresetEnabled) {
-                        store.applyTrimPreset(lengthMs: 4_000)
-                    }
+                CompactIconButton(systemImage: "trash", contentDescription: "選択中のクリップを削除",
+                                   enabled: enabled, tint: AppColors.error(colorScheme)) {
+                    if let i = store.selectedIndex { store.deleteClip(at: i) }
                 }
+                CompactIconButton(systemImage: "trash.fill", contentDescription: "すべて削除",
+                                   enabled: !store.clips.isEmpty, tint: AppColors.error(colorScheme)) {
+                    showDeleteAllAlert = true
+                }
+
+                divider
+
+                CompactIconButton(systemImage: "arrow.left", contentDescription: "ひとつ前へ移動",
+                                   enabled: canMoveLeft) {
+                    playerManager.pause(); store.moveClipLeft()
+                }
+                CompactIconButton(systemImage: "arrow.right", contentDescription: "ひとつ後ろへ移動",
+                                   enabled: canMoveRight) {
+                    playerManager.pause(); store.moveClipRight()
+                }
+
+                divider
+
+                ToggleIconButton(
+                    systemImage: store.timelineMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
+                    checked: store.timelineMuted,
+                    enabled: !store.clips.isEmpty
+                ) { store.toggleTimelineMuted() }
+
+                ToggleIconButton(
+                    systemImage: "play.fill",
+                    checked: store.isContinuousPlay,
+                    enabled: !store.clips.isEmpty
+                ) { store.toggleContinuousPlay() }
+
+                divider
+
+                CompactIconButton(systemImage: "arrow.uturn.backward", contentDescription: "もとに戻す",
+                                   enabled: store.canUndo) { store.undo() }
+                CompactIconButton(systemImage: "arrow.uturn.forward", contentDescription: "やり直す",
+                                   enabled: store.canRedo) { store.redo() }
+
+                divider
+
+                TrimPresetButton(label: "2s", enabled: trimPresetEnabled) {
+                    store.applyTrimPreset(lengthMs: 2_000)
+                }
+                TrimPresetButton(label: "4s", enabled: trimPresetEnabled) {
+                    store.applyTrimPreset(lengthMs: 4_000)
+                }
+
+                divider
+
+                splitButton
             }
-
-            divider
-
-            splitButton
         }
         .frame(height: VlogLayout.toolbarButtonSize)
     }
