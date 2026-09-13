@@ -56,7 +56,8 @@ struct ActionButtons: View {
                 Text("書き出し")
                     .lineLimit(1)
                     .frame(maxWidth: .infinity)
-                    .tonalPill(enabled: !store.clips.isEmpty, colorScheme: colorScheme)
+                    // Android版ExportButtonは動画を追加と違いprimary塗り（主役の操作として強調）
+                    .primaryPill(enabled: !store.clips.isEmpty, colorScheme: colorScheme)
                     .contentShape(Rectangle())
                     .onTapGesture {
                         guard !store.clips.isEmpty else { return }
@@ -88,6 +89,16 @@ private extension View {
             .foregroundStyle(enabled ? AppColors.onSecondaryContainer(colorScheme) : onSurface.opacity(0.38))
             .padding(.vertical, 12)
             .background(Capsule().fill(enabled ? AppColors.secondaryContainer(colorScheme) : onSurface.opacity(0.12)))
+    }
+
+    /// Android ExportButton相当。primary塗り＋onPrimary文字（他がトナルなのに対しここだけ強調）
+    func primaryPill(enabled: Bool, colorScheme: ColorScheme) -> some View {
+        let onSurface = AppColors.onSurfaceVariant(colorScheme)
+        return self
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(enabled ? AppColors.onPrimary(colorScheme) : onSurface.opacity(0.38))
+            .padding(.vertical, 12)
+            .background(Capsule().fill(enabled ? AppColors.primary(colorScheme) : onSurface.opacity(0.12)))
     }
 
     func tonalCircle(enabled: Bool, colorScheme: ColorScheme) -> some View {

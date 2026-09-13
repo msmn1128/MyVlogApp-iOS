@@ -6,6 +6,7 @@ import UIKit
 enum AppColors {
     // --- Light ---
     static let lightPrimary            = Color(hex: 0x6B3FD4)
+    static let lightOnPrimary          = Color.white
     static let lightOnPrimaryContainer = Color(hex: 0x23005C)
     static let lightPrimaryContainer   = Color(hex: 0xE9DDFF)
     static let lightOnSecondaryContainer = Color(hex: 0x1E192B)
@@ -21,6 +22,7 @@ enum AppColors {
 
     // --- Dark ---
     static let darkPrimary            = Color(hex: 0xCFBCFF)
+    static let darkOnPrimary          = Color(hex: 0x390094)
     static let darkOnPrimaryContainer = Color(hex: 0xE9DDFF)
     static let darkPrimaryContainer   = Color(hex: 0x5228BB)
     static let darkOnSecondaryContainer = Color(hex: 0xE8DEF8)
@@ -39,6 +41,7 @@ enum AppColors {
     static var waveformDim:        Color { primary(current).opacity(0.25) }
 
     static func primary(_ scheme: ColorScheme) -> Color { scheme == .dark ? darkPrimary : lightPrimary }
+    static func onPrimary(_ scheme: ColorScheme) -> Color { scheme == .dark ? darkOnPrimary : lightOnPrimary }
     static func background(_ scheme: ColorScheme) -> Color { scheme == .dark ? darkBackground : lightBackground }
     /// カード（タイムライン等の面）。Android surfaceContainer相当
     static func card(_ scheme: ColorScheme) -> Color { scheme == .dark ? darkSurfaceContainer : lightSurfaceContainer }
