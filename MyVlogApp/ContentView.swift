@@ -136,19 +136,34 @@ struct ContentView: View {
             .environmentObject(exportManager)
             .padding(.horizontal, 12)
 
-            TimelineView()
-                .environmentObject(store)
-                .environmentObject(playerManager)
-                .padding(.horizontal, 12)
+            // Android版の timelineWeight(0.40) : editorWeight(0.18) と同じ比率で
+            // 残り高さを配分する（キーボード非表示時の値）。
+            GeometryReader { geo in
+                let spacing: CGFloat = 10
+                let available = max(0, geo.size.height - spacing)
+                let timelineHeight = available * timelineHeightRatio
+                let editorHeight   = available * editorHeightRatio
 
-            TextInputView()
-                .environmentObject(store)
-                .environmentObject(playerManager)
+                VStack(spacing: spacing) {
+                    TimelineView()
+                        .environmentObject(store)
+                        .environmentObject(playerManager)
+                        .frame(height: timelineHeight)
+
+                    TextInputView()
+                        .environmentObject(store)
+                        .environmentObject(playerManager)
+                        .frame(height: editorHeight)
+                }
                 .padding(.horizontal, 12)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
         .padding(.vertical, 10)
     }
+
+    /// Android: VlogAppScreen.timelineWeight / editorWeight（imeVisible=false）を正規化した比率
+    private var timelineHeightRatio: CGFloat { 0.40 / (0.40 + 0.18) }
+    private var editorHeightRatio:   CGFloat { 0.18 / (0.40 + 0.18) }
 
     private func landscapeLayout(size: CGSize) -> some View {
         HStack(spacing: 10) {
@@ -172,15 +187,21 @@ struct ContentView: View {
             .padding(.leading, 12)
             .frame(width: size.width * 0.5)
 
-            VStack(spacing: 10) {
-                TimelineView()
-                    .environmentObject(store)
-                    .environmentObject(playerManager)
+            GeometryReader { geo in
+                let spacing: CGFloat = 10
+                let available = max(0, geo.size.height - spacing)
 
-                TextInputView()
-                    .environmentObject(store)
-                    .environmentObject(playerManager)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                VStack(spacing: spacing) {
+                    TimelineView()
+                        .environmentObject(store)
+                        .environmentObject(playerManager)
+                        .frame(height: available * timelineHeightRatio)
+
+                    TextInputView()
+                        .environmentObject(store)
+                        .environmentObject(playerManager)
+                        .frame(height: available * editorHeightRatio)
+                }
             }
             .padding(.trailing, 12)
             .frame(width: size.width * 0.5)

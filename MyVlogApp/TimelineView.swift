@@ -11,35 +11,38 @@ struct TimelineView: View {
     @State private var showDeleteAllAlert: Bool = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("タイムライン")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
+        ScrollView {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("タイムライン")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
 
-            OperationBar(showDeleteAllAlert: $showDeleteAllAlert)
-                .environmentObject(store)
-                .environmentObject(playerManager)
-
-            if store.clips.isEmpty {
-                HStack {
-                    Spacer()
-                    Text("動画を追加するとここに並びます")
-                        .font(.system(size: 12))
-                        .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
-                    Spacer()
-                }
-                .padding(.vertical, 24)
-            } else {
-                clipRow
-
-                WaveformView()
+                OperationBar(showDeleteAllAlert: $showDeleteAllAlert)
                     .environmentObject(store)
                     .environmentObject(playerManager)
-                    .frame(height: 95)
-                    .padding(.top, 8)
+
+                if store.clips.isEmpty {
+                    HStack {
+                        Spacer()
+                        Text("動画を追加するとここに並びます")
+                            .font(.system(size: 12))
+                            .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
+                        Spacer()
+                    }
+                    .padding(.vertical, 24)
+                } else {
+                    clipRow
+
+                    WaveformView()
+                        .environmentObject(store)
+                        .environmentObject(playerManager)
+                        .frame(height: 95)
+                        .padding(.top, 8)
+                }
             }
+            .padding(12)
         }
-        .padding(12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AppColors.card(colorScheme))
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .alert("すべて削除", isPresented: $showDeleteAllAlert) {
