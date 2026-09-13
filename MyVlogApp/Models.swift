@@ -19,13 +19,27 @@ struct VlogClip: Identifiable, Codable, Equatable {
     var startMs: Int64
     var endMs: Int64
     var isMuted: Bool = false   // このクリップの音声を書き出しで無音にするか（Android: VlogModels.kt isMuted）
+    var shotAtMillis: Int64 = 0 // 撮影/作成日時（並び替えの基準）。0は未取得・旧データ
 
     /// タイムライン全体のミュート状態と合わせて、書き出し時に無音にすべきか判定する
     func isSilentInExport(timelineMuted: Bool) -> Bool { isMuted || timelineMuted }
 
+    /// 並び替えの基準。shotAtMillisが無い旧データはdateText/timeTextから逆算する
+    /// （Android: VlogModels.kt sortKeyMs / parseShotAtText）
+    var sortKeyMs: Int64 {
+        if shotAtMillis > 0 { return shotAtMillis }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy/MM/dd HH:mm"
+        if let date = formatter.date(from: "\(dateText) \(timeText)") {
+            return Int64(date.timeIntervalSince1970 * 1000)
+        }
+        return .max
+    }
+
     private enum CodingKeys: String, CodingKey {
         case id, assetIdentifier, fileURL, relativeFilePath, timeText, dateText
-        case durationMs, width, height, texts, startMs, endMs, isMuted
+        case durationMs, width, height, texts, startMs, endMs, isMuted, shotAtMillis
     }
 
     init(from decoder: Decoder) throws {
@@ -43,6 +57,7 @@ struct VlogClip: Identifiable, Codable, Equatable {
         startMs          = try c.decode(Int64.self, forKey: .startMs)
         endMs            = try c.decode(Int64.self, forKey: .endMs)
         isMuted          = try c.decodeIfPresent(Bool.self, forKey: .isMuted) ?? false
+        shotAtMillis     = try c.decodeIfPresent(Int64.self, forKey: .shotAtMillis) ?? 0
     }
 
     init(
@@ -58,7 +73,8 @@ struct VlogClip: Identifiable, Codable, Equatable {
         texts: [TextSegment],
         startMs: Int64,
         endMs: Int64,
-        isMuted: Bool = false
+        isMuted: Bool = false,
+        shotAtMillis: Int64 = 0
     ) {
         self.id = id
         self.assetIdentifier = assetIdentifier
@@ -73,6 +89,7 @@ struct VlogClip: Identifiable, Codable, Equatable {
         self.startMs = startMs
         self.endMs = endMs
         self.isMuted = isMuted
+        self.shotAtMillis = shotAtMillis
     }
 
     var resolvedFileURL: URL? {

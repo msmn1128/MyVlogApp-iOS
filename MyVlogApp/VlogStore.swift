@@ -107,12 +107,22 @@ class VlogStore: ObservableObject {
 
     // MARK: - Clip operations
 
+    /// 撮影/作成日時順になる位置へ追加し、追加した中で最も古いものを選択する（Android: addClips/mergeByShotAt）
     func addClips(_ newClips: [VlogClip]) {
         guard !newClips.isEmpty else { return }
         recordForUndo()
-        let wasEmpty = clips.isEmpty
-        clips.append(contentsOf: newClips)
-        if wasEmpty { selectedIndex = 0 }
+        let oldestAddedId = newClips.min { $0.sortKeyMs < $1.sortKeyMs }?.id
+
+        var result = clips
+        for clip in newClips.sorted(by: { $0.sortKeyMs < $1.sortKeyMs }) {
+            let index = result.firstIndex { $0.sortKeyMs > clip.sortKeyMs } ?? result.count
+            result.insert(clip, at: index)
+        }
+        clips = result
+
+        if let id = oldestAddedId, let index = clips.firstIndex(where: { $0.id == id }) {
+            selectedIndex = index
+        }
         scheduleAutoSave()
     }
 
@@ -167,6 +177,13 @@ class VlogStore: ObservableObject {
         clip.endMs   = endMs
         updateSelectedClip(clip)
         scheduleAutoSave()
+    }
+
+    /// 先頭から指定の長さだけトリムする（Android: applyTrimPreset）
+    func applyTrimPreset(lengthMs: Int64) {
+        guard let clip = selectedClip, clip.durationMs > 0 else { return }
+        let startMs = min(max(clip.startMs, 0), clip.durationMs)
+        updateTrim(startMs: startMs, endMs: min(startMs + lengthMs, clip.durationMs))
     }
 
     // MARK: - Text / Split

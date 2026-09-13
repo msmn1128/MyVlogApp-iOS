@@ -36,7 +36,6 @@ struct ContentView: View {
 
     // Sheet / alert presentation
     @State private var showSavedProjects:  Bool = false
-    @State private var showDeleteAllAlert: Bool = false
     @State private var showFilePicker:     Bool = false
     @State private var showPhotoPicker:    Bool = false
 
@@ -112,12 +111,6 @@ struct ContentView: View {
             Task { await handleFilePick(result) }
         }
         // Alerts & sheets
-        .alert("すべて削除", isPresented: $showDeleteAllAlert) {
-            Button("削除", role: .destructive) { store.deleteAllClips() }
-            Button("キャンセル", role: .cancel) {}
-        } message: {
-            Text("すべてのクリップを削除します。Undoで戻せます。")
-        }
         .sheet(isPresented: $showSavedProjects) {
             SavedProjectsView().environmentObject(store)
         }
@@ -126,82 +119,83 @@ struct ContentView: View {
     // MARK: - Layout builders
 
     private func portraitLayout(size: CGSize) -> some View {
-        VStack(spacing: 0) {
+        VStack(spacing: 10) {
             PreviewView()
                 .environmentObject(store)
                 .environmentObject(playerManager)
                 .aspectRatio(16 / 9, contentMode: .fit)
                 .frame(width: size.width)
 
-            OperationBar(
-                showSavedProjects:  $showSavedProjects,
-                showDeleteAllAlert: $showDeleteAllAlert,
-                showPhotoPicker:    $showPhotoPicker,
-                showFilePicker:     $showFilePicker
+            ActionButtons(
+                showSavedProjects: $showSavedProjects,
+                showPhotoPicker:   $showPhotoPicker,
+                showFilePicker:    $showFilePicker
             )
             .environmentObject(store)
-            .environmentObject(playerManager)
+            .environmentObject(exportManager)
+            .padding(.horizontal, 12)
 
             TimelineView()
                 .environmentObject(store)
                 .environmentObject(playerManager)
-                .frame(height: 95)
+                .padding(.horizontal, 12)
 
             WaveformView()
                 .environmentObject(store)
                 .environmentObject(playerManager)
                 .frame(height: 95)
-                .padding(.horizontal, 4)
+                .padding(.horizontal, 12)
 
             TextInputView()
                 .environmentObject(store)
                 .environmentObject(playerManager)
+                .padding(.horizontal, 12)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .padding(.vertical, 10)
     }
 
     private func landscapeLayout(size: CGSize) -> some View {
-        HStack(spacing: 0) {
-            VStack(spacing: 0) {
+        HStack(spacing: 10) {
+            VStack(spacing: 10) {
                 PreviewView()
                     .environmentObject(store)
                     .environmentObject(playerManager)
                     .aspectRatio(16 / 9, contentMode: .fit)
                     .frame(maxWidth: size.width * 0.5)
 
-                OperationBar(
-                    showSavedProjects:  $showSavedProjects,
-                    showDeleteAllAlert: $showDeleteAllAlert,
-                    showPhotoPicker:    $showPhotoPicker,
-                    showFilePicker:     $showFilePicker
+                ActionButtons(
+                    showSavedProjects: $showSavedProjects,
+                    showPhotoPicker:   $showPhotoPicker,
+                    showFilePicker:    $showFilePicker
                 )
                 .environmentObject(store)
-                .environmentObject(playerManager)
-                .padding(.vertical, 2)
+                .environmentObject(exportManager)
 
                 Spacer()
             }
+            .padding(.leading, 12)
             .frame(width: size.width * 0.5)
 
-            VStack(spacing: 0) {
+            VStack(spacing: 10) {
                 TimelineView()
                     .environmentObject(store)
                     .environmentObject(playerManager)
-                    .frame(height: 90)
 
                 WaveformView()
                     .environmentObject(store)
                     .environmentObject(playerManager)
                     .frame(height: 90)
-                    .padding(.horizontal, 4)
 
                 TextInputView()
                     .environmentObject(store)
                     .environmentObject(playerManager)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            .padding(.trailing, 12)
             .frame(width: size.width * 0.5)
         }
+        .padding(.vertical, 10)
     }
 
     // MARK: - Import handlers
@@ -257,7 +251,8 @@ struct ContentView: View {
         let durationMs = Int64(asset.duration * 1000)
         guard durationMs > 0 else { return nil }
 
-        let (time, date) = formatDate(asset.creationDate ?? Date())
+        let creationDate = asset.creationDate ?? Date()
+        let (time, date) = formatDate(creationDate)
 
         return VlogClip(
             id:               UUID(),
@@ -271,7 +266,8 @@ struct ContentView: View {
             height:           max(1, asset.pixelHeight),
             texts:            [TextSegment()],
             startMs:          0,
-            endMs:            durationMs
+            endMs:            durationMs,
+            shotAtMillis:     Int64(creationDate.timeIntervalSince1970 * 1000)
         )
     }
 
@@ -366,7 +362,8 @@ struct ContentView: View {
             height:           max(1, h),
             texts:            [TextSegment()],
             startMs:          0,
-            endMs:            durationMs
+            endMs:            durationMs,
+            shotAtMillis:     Int64(actualDate.timeIntervalSince1970 * 1000)
         )
     }
 

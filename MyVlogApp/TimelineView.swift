@@ -1,12 +1,50 @@
 import SwiftUI
 import Photos
 
+/// 「タイムライン」カード全体。Android版TimelinePaneと同じく、見出し・操作バー・
+/// クリップ一覧（または空メッセージ）を1枚のカードにまとめる。
 struct TimelineView: View {
     @EnvironmentObject var store:         VlogStore
     @EnvironmentObject var playerManager: VideoPlayerManager
     @Environment(\.colorScheme) var colorScheme
 
+    @State private var showDeleteAllAlert: Bool = false
+
     var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("タイムライン")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
+
+            OperationBar(showDeleteAllAlert: $showDeleteAllAlert)
+                .environmentObject(store)
+                .environmentObject(playerManager)
+
+            if store.clips.isEmpty {
+                HStack {
+                    Spacer()
+                    Text("動画を追加するとここに並びます")
+                        .font(.system(size: 12))
+                        .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
+                    Spacer()
+                }
+                .padding(.vertical, 24)
+            } else {
+                clipRow
+            }
+        }
+        .padding(12)
+        .background(AppColors.card(colorScheme))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .alert("すべて削除", isPresented: $showDeleteAllAlert) {
+            Button("削除", role: .destructive) { store.deleteAllClips() }
+            Button("キャンセル", role: .cancel) {}
+        } message: {
+            Text("すべてのクリップを削除します。Undoで戻せます。")
+        }
+    }
+
+    private var clipRow: some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
@@ -22,7 +60,6 @@ struct TimelineView: View {
                         }
                     }
                 }
-                .padding(.horizontal, 10)
                 .padding(.vertical, 6)
             }
             .onChange(of: store.selectedIndex) { _, idx in

@@ -12,21 +12,21 @@ struct TextInputView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Divider()
-
             VStack(alignment: .leading, spacing: 6) {
-                // Segment indicator
-                HStack {
+                // Segment indicator（Android: EditorPane、常に「ひとこと」見出し＋区間バッジ）
+                HStack(spacing: 6) {
+                    Text("ひとこと")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
                     if let clip = store.selectedClip, clip.texts.count > 1 {
-                        Text("区間 \(segmentIndex + 1)/\(clip.texts.count)")
-                            .font(.caption2)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(AppColors.primary)
-                    } else {
-                        Text("テロップ")
-                            .font(.caption2)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(.secondary)
+                        Text("\(segmentIndex + 1)")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(AppColors.onSplitLine(colorScheme))
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(Capsule().fill(AppColors.splitLine(colorScheme)))
+                        Text("／\(clip.texts.count) 区間目を編集中")
+                            .font(.system(size: 11))
+                            .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
                     }
                     Spacer()
                 }
@@ -62,6 +62,7 @@ struct TextInputView: View {
             .padding(.bottom, 12)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(AppColors.card(colorScheme))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
         }
         .onChange(of: store.selectedIndex) { syncText() }
         .onChange(of: playerManager.currentTimeMs) {
