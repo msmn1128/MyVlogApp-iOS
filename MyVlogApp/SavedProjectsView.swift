@@ -1,126 +1,199 @@
 import SwiftUI
 
+/// 「編集内容の保存」ダイアログ。Android版SaveLoadDialogと同じ、中央カード＋暗幕オーバーレイで
+/// 保存・上書き・読み出し・削除をまとめる。
 struct SavedProjectsView: View {
     @EnvironmentObject var store: VlogStore
-    @Environment(\.dismiss) var dismiss
     @Environment(\.colorScheme) var colorScheme
+    let onDismiss: () -> Void
 
-    @State private var saveName:       String = ""
-    @State private var showSaveError:  Bool   = false
-    @State private var confirmDeleteID: Int64? = nil
+    @State private var name: String = ""
+    @State private var pendingDelete: SavedProject? = nil
+    @State private var showLimitAlert: Bool = false
+
+    private var canSave: Bool { !store.clips.isEmpty }
 
     var body: some View {
-        NavigationView {
+        ZStack {
+            Color.black.opacity(0.55).ignoresSafeArea()
+                .onTapGesture { onDismiss() }
+
             VStack(spacing: 0) {
-                // ── Save current ──
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("現在の編集内容を保存")
-                        .font(.subheadline).fontWeight(.semibold)
-                        .foregroundStyle(.secondary)
+                Image(systemName: "doc.fill")
+                    .font(.system(size: 28))
+                    .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
+                    .padding(.top, 24)
+
+                Text("編集内容の保存")
+                    .font(.system(size: 20, weight: .semibold))
+                    .padding(.top, 12)
+                    .padding(.bottom, 20)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("保存名")
+                        .font(.system(size: 11))
+                        .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
+                    TextField("", text: $name)
+                        .textFieldStyle(.plain)
+                        .padding(10)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(AppColors.outlineVariant(colorScheme), lineWidth: 1)
+                        )
+                        .disabled(!canSave)
+                }
+
+                Button {
+                    if store.saveCurrentProject(name: name.isEmpty ? "無題" : name) {
+                        name = nextDefaultName()
+                    } else {
+                        showLimitAlert = true
+                    }
+                } label: {
+                    Text("この内容を保存")
+                        .frame(maxWidth: .infinity)
+                        .tonalPill(enabled: canSave, colorScheme: colorScheme)
+                }
+                .disabled(!canSave)
+                .padding(.top, 8)
+
+                Divider().padding(.vertical, 14)
+
+                HStack {
+                    Text("保存した内容")
+                        .font(.system(size: 14, weight: .semibold))
+                    Spacer()
+                }
+
+                if store.savedProjects.isEmpty {
                     HStack {
-                        TextField("プロジェクト名", text: $saveName)
-                            .textFieldStyle(.roundedBorder)
-                        Button("保存") {
-                            if store.saveCurrentProject(name: saveName.isEmpty ? "無題" : saveName) {
-                                saveName = ""
-                            } else {
-                                showSaveError = true
+                        Text("まだありません")
+                            .font(.system(size: 12))
+                            .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
+                        Spacer()
+                    }
+                    .padding(.top, 6)
+                } else {
+                    ScrollView {
+                        VStack(spacing: 6) {
+                            ForEach(store.savedProjects) { project in
+                                SavedProjectRow(
+                                    project: project,
+                                    onLoad: { store.loadProject(project); onDismiss() },
+                                    onOverwrite: { store.overwriteProject(id: project.id, name: project.name) },
+                                    onDelete: { pendingDelete = project }
+                                )
                             }
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(AppColors.primary)
-                        .disabled(store.clips.isEmpty)
+                        .padding(.top, 6)
                     }
+                    .frame(maxHeight: 220)
                 }
-                .padding()
-                .background(AppColors.card(colorScheme))
 
-                Divider()
-
-                // ── Saved list ──
-                if store.savedProjects.isEmpty {
-                    ContentUnavailableView(
-                        "保存されたプロジェクトなし",
-                        systemImage: "tray",
-                        description: Text("上のフォームで現在の編集を保存できます")
-                    )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    List {
-                        ForEach(store.savedProjects) { project in
-                            ProjectRow(project: project)
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    store.loadProject(project)
-                                    dismiss()
-                                }
-                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                    Button(role: .destructive) {
-                                        confirmDeleteID = project.id
-                                    } label: {
-                                        Label("削除", systemImage: "trash")
-                                    }
-                                }
-                        }
-                    }
-                    .listStyle(.plain)
+                HStack {
+                    Spacer()
+                    Button("閉じる") { onDismiss() }
+                        .foregroundStyle(AppColors.primary(colorScheme))
+                        .font(.system(size: 14, weight: .semibold))
                 }
+                .padding(.top, 16)
             }
-            .navigationTitle("保存プロジェクト")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("閉じる") { dismiss() }
-                }
-            }
-            .alert("上限に達しています", isPresented: $showSaveError) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text("保存できるプロジェクトは最大20件です。古いものを削除してください。")
-            }
-            .alert("削除の確認", isPresented: Binding(
-                get: { confirmDeleteID != nil },
-                set: { if !$0 { confirmDeleteID = nil } }
-            )) {
-                Button("削除", role: .destructive) {
-                    if let id = confirmDeleteID { store.deleteSavedProject(id: id) }
-                    confirmDeleteID = nil
-                }
-                Button("キャンセル", role: .cancel) { confirmDeleteID = nil }
-            } message: {
-                Text("このプロジェクトを削除します。この操作は取り消せません。")
-            }
+            .padding(24)
+            .background(AppColors.cardHigh(colorScheme))
+            .clipShape(RoundedRectangle(cornerRadius: 20))
+            .padding(.horizontal, 24)
+            .frame(maxWidth: 420)
         }
+        .onAppear { name = nextDefaultName() }
+        .alert("上限に達しています", isPresented: $showLimitAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("保存できるプロジェクトは最大20件です。古いものを削除してください。")
+        }
+        .alert("削除しますか", isPresented: Binding(
+            get: { pendingDelete != nil },
+            set: { if !$0 { pendingDelete = nil } }
+        )) {
+            Button("削除", role: .destructive) {
+                if let id = pendingDelete?.id { store.deleteSavedProject(id: id) }
+                pendingDelete = nil
+            }
+            Button("キャンセル", role: .cancel) { pendingDelete = nil }
+        } message: {
+            Text("「\(pendingDelete?.name ?? "")」を削除します。元には戻せません。")
+        }
+    }
+
+    /// 既定の保存名 "M/d"。同名があれば "M/d (1)" のように連番を付ける（Android: defaultSaveName）
+    private func nextDefaultName() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "M/d"
+        let base = formatter.string(from: Date())
+        let taken = Set(store.savedProjects.map { $0.name })
+        var candidate = base
+        var index = 1
+        while taken.contains(candidate) {
+            candidate = "\(base) (\(index))"
+            index += 1
+        }
+        return candidate
     }
 }
 
-private struct ProjectRow: View {
+private struct SavedProjectRow: View {
     let project: SavedProject
+    let onLoad: () -> Void
+    let onOverwrite: () -> Void
+    let onDelete: () -> Void
+
     @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(project.name)
-                .font(.headline)
-            HStack {
-                Text(dateLabel)
-                    .font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Text("\(project.clipCount)クリップ · \(durationLabel)")
-                    .font(.caption).foregroundStyle(.secondary)
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(project.name)
+                    .font(.system(size: 12, weight: .bold))
+                    .lineLimit(1)
+                Text("\(project.clipCount)本・\(durationLabel)　\(savedAtLabel)")
+                    .font(.system(size: 11))
+                    .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
             }
+            Spacer()
+            Button(action: onDelete) {
+                Image(systemName: "trash")
+                    .font(.system(size: 14))
+                    .foregroundStyle(AppColors.error(colorScheme))
+                    .frame(width: 32, height: 32)
+            }
+            .buttonStyle(.plain)
         }
-        .padding(.vertical, 4)
+        .padding(.leading, 12).padding(.trailing, 4).padding(.vertical, 8)
+        .background(AppColors.cardHigh(colorScheme).opacity(0.001)) // 当たり判定を全面に広げる
+        .background(RoundedRectangle(cornerRadius: 8).fill(AppColors.card(colorScheme)))
+        .contentShape(Rectangle())
+        .onTapGesture { onLoad() }
+        .onLongPressGesture { onOverwrite() }
     }
 
-    private var dateLabel: String {
+    private var savedAtLabel: String {
         let date = Date(timeIntervalSince1970: Double(project.savedAt) / 1000)
-        let f = DateFormatter(); f.dateFormat = "yyyy/MM/dd HH:mm"
+        let f = DateFormatter(); f.dateFormat = "M/d HH:mm"
         return f.string(from: date)
     }
 
     private var durationLabel: String {
         let s = project.totalMs / 1000
         return String(format: "%d:%02d", s / 60, s % 60)
+    }
+}
+
+private extension View {
+    func tonalPill(enabled: Bool, colorScheme: ColorScheme) -> some View {
+        let onSurface = AppColors.onSurfaceVariant(colorScheme)
+        return self
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(enabled ? AppColors.onSecondaryContainer(colorScheme) : onSurface.opacity(0.38))
+            .padding(.vertical, 12)
+            .background(Capsule().fill(enabled ? AppColors.secondaryContainer(colorScheme) : onSurface.opacity(0.12)))
     }
 }

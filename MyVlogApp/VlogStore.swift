@@ -313,6 +313,21 @@ class VlogStore: ObservableObject {
         scheduleAutoSave()
     }
 
+    /// 既存の保存を、名前とidはそのままに現在の編集内容で上書きする（Android: overwriteProject）
+    func overwriteProject(id: Int64, name: String) {
+        guard let idx = savedProjects.firstIndex(where: { $0.id == id }) else { return }
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        savedProjects[idx] = SavedProject(
+            id: id,
+            name: name,
+            savedAt: now,
+            clipCount: clips.count,
+            totalMs: clips.reduce(0) { $0 + $1.trimmedDurationMs },
+            clips: clips
+        )
+        persistSavedProjects()
+    }
+
     func deleteSavedProject(id: Int64) {
         savedProjects.removeAll { $0.id == id }
         persistSavedProjects()

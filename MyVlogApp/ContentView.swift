@@ -68,6 +68,11 @@ struct ContentView: View {
                 if exportManager.isExporting {
                     ExportOverlayView().environmentObject(exportManager)
                 }
+
+                if showSavedProjects {
+                    SavedProjectsView(onDismiss: { showSavedProjects = false })
+                        .environmentObject(store)
+                }
             }
             .onChange(of: sz) { _, newSz in
                 isLandscape = newSz.width > newSz.height
@@ -109,10 +114,6 @@ struct ContentView: View {
             allowsMultipleSelection: true
         ) { result in
             Task { await handleFilePick(result) }
-        }
-        // Alerts & sheets
-        .sheet(isPresented: $showSavedProjects) {
-            SavedProjectsView().environmentObject(store)
         }
     }
 
