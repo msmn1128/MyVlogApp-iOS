@@ -2,42 +2,43 @@
 //  MyVlogAppUITests.swift
 //  MyVlogAppUITests
 //
-//  Created by 戸田誠大 on 2026/08/26.
-//
 
 import XCTest
 
 final class MyVlogAppUITests: XCTestCase {
 
     override func setUpWithError() throws {
-        // Put setup code here. This method is called before the invocation of each test method in the class.
-
-        // In UI tests it is usually best to stop immediately when a failure occurs.
         continueAfterFailure = false
-
-        // In UI tests it’s important to set the initial state - such as interface orientation - required for your tests before they run. The setUp method is a good place to do this.
     }
 
-    override func tearDownWithError() throws {
-        // Put teardown code here. This method is called after the invocation of each test method in the class.
-    }
-
+    /// 起動直後の主要要素と、追加メニューが開けることを確認するスモークテスト。
+    /// PHPickerViewControllerは別プロセスで動くため、動画選択そのものはXCUITestの
+    /// スコープ外（app.cellsで拾えない）——そこから先は手動確認に委ねる。
     @MainActor
-    func testExample() throws {
-        // UI tests must launch the application that they test.
+    func testHomeScreenAndAddMenu() throws {
         let app = XCUIApplication()
         app.launch()
 
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
-        // XCUIAutomation Documentation
-        // https://developer.apple.com/documentation/xcuiautomation
-    }
+        XCTAssertTrue(app.staticTexts["タイムライン"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["ひとこと"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["動画を追加するとここに並びます"].waitForExistence(timeout: 5))
 
-    @MainActor
-    func testLaunchPerformance() throws {
-        // This measures how long it takes to launch your application.
-        measure(metrics: [XCTApplicationLaunchMetric()]) {
-            XCUIApplication().launch()
-        }
+        let addButton = app.buttons["動画を追加"]
+        XCTAssertTrue(addButton.waitForExistence(timeout: 5))
+        addButton.tap()
+
+        let photoLibraryItem = app.buttons["フォトライブラリ"]
+        let fileItem = app.buttons["ファイルから選択"]
+        XCTAssertTrue(photoLibraryItem.waitForExistence(timeout: 5))
+        XCTAssertTrue(fileItem.exists)
+
+        // メニューを閉じる（画面外をタップ）
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.05)).tap()
+
+        let screenshot = app.screenshot()
+        let attachment = XCTAttachment(screenshot: screenshot)
+        attachment.lifetime = .keepAlways
+        attachment.name = "home_screen"
+        add(attachment)
     }
 }
