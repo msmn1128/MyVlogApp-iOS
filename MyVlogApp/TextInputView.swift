@@ -6,6 +6,9 @@ struct TextInputView: View {
     @EnvironmentObject var playerManager: VideoPlayerManager
     @Environment(\.colorScheme) var colorScheme
 
+    /// 縦画面で入力中に他のセクションを隠す全画面モードへ切り替えるための通知先（任意）
+    var onEditingChange: ((Bool) -> Void)? = nil
+
     @State private var text:         String = ""
     @State private var segmentIndex: Int    = 0
     @State private var isEditing:    Bool   = false
@@ -39,9 +42,11 @@ struct TextInputView: View {
                     onBeginEditing: {
                         isEditing = true
                         playerManager.pause()
+                        onEditingChange?(true)
                     },
                     onEndEditing: {
                         isEditing = false
+                        onEditingChange?(false)
                     },
                     onChange: { newText in
                         store.updateText(newText, segmentIndex: segmentIndex)

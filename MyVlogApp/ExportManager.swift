@@ -374,6 +374,11 @@ class ExportManager: ObservableObject {
         if let animLayer {
             let videoLayer = CALayer()
             videoLayer.frame = CGRect(origin: .zero, size: canvas)
+            // レイヤーツリー自体のbeginTimeをゼロ基準にしておかないと、素のCALayerは生成された
+            // 実時刻を基準に扱われ、動画のローカル時間とズレる（短いクリップほど、この見えない
+            // オフセットが尺全体を食いつぶして文字が丸ごと出なくなる）。
+            animLayer.beginTime  = AVCoreAnimationBeginTimeAtZero
+            videoLayer.beginTime = AVCoreAnimationBeginTimeAtZero
             animLayer.insertSublayer(videoLayer, at: 0)
             videoComp.animationTool = AVVideoCompositionCoreAnimationTool(
                 postProcessingAsVideoLayer: videoLayer,
@@ -397,6 +402,7 @@ class ExportManager: ObservableObject {
         let parent = CALayer()
         parent.frame = CGRect(origin: .zero, size: canvas)
         parent.isGeometryFlipped = true  // use UIKit-like top-left origin
+        parent.beginTime = AVCoreAnimationBeginTimeAtZero
 
         let spans  = clip.visibleTextSpans()   // relative to trimStart
         let lineH  = VlogLayout.hitokoroFontSize + VlogLayout.hitokoroLineGap

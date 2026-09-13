@@ -49,6 +49,8 @@ struct ContentView: View {
 
     // キーボード表示中はひとこと欄を広げる（Android: VlogAppScreen imeVisible分岐）
     @State private var isKeyboardVisible: Bool = false
+    // 縦画面で「ひとこと」を編集中は、プレビュー・タイムラインを隠して入力欄だけを全画面表示する
+    @State private var isEditingHitokoto: Bool = false
 
     @Environment(\.colorScheme) var colorScheme
 
@@ -135,24 +137,30 @@ struct ContentView: View {
     // MARK: - Layout builders
 
     private func portraitLayout(size: CGSize) -> some View {
+        // TextInputView自体は常に同じ呼び出し箇所を保つ（if/elseで別インスタンスに切り替えると
+        // NativeTextViewのUITextViewが作り直されてfirst responderが外れ、キーボードが
+        // 閉じてしまう）。編集中は周りの要素だけをif文で隠す。
         VStack(spacing: 10) {
-            PreviewView()
-                .environmentObject(store)
-                .environmentObject(playerManager)
-                .aspectRatio(16 / 9, contentMode: .fit)
-                .frame(width: size.width)
+            if !isEditingHitokoto {
+                PreviewView()
+                    .environmentObject(store)
+                    .environmentObject(playerManager)
+                    .aspectRatio(16 / 9, contentMode: .fit)
+                    .frame(width: size.width)
 
-            ActionButtons(
-                showSavedProjects: $showSavedProjects,
-                showPhotoPicker:   $showPhotoPicker,
-                showFilePicker:    $showFilePicker
-            )
-            .environmentObject(store)
-            .environmentObject(exportManager)
-            .padding(.horizontal, 12)
+                ActionButtons(
+                    showSavedProjects: $showSavedProjects,
+                    showPhotoPicker:   $showPhotoPicker,
+                    showFilePicker:    $showFilePicker
+                )
+                .environmentObject(store)
+                .environmentObject(exportManager)
+                .padding(.horizontal, 12)
+            }
 
             // Android版の timelineWeight(0.40) : editorWeight(0.18) と同じ比率で
-            // 残り高さを配分する（キーボード非表示時の値）。
+            // 残り高さを配分する（キーボード非表示時の値）。編集中はタイムラインを隠し、
+            // 入力欄だけで残り全高を使う。
             GeometryReader { geo in
                 let spacing: CGFloat = 10
                 let available = max(0, geo.size.height - spacing)
@@ -160,15 +168,17 @@ struct ContentView: View {
                 let editorHeight   = available * editorHeightRatio
 
                 VStack(spacing: spacing) {
-                    TimelineView()
-                        .environmentObject(store)
-                        .environmentObject(playerManager)
-                        .frame(height: timelineHeight)
+                    if !isEditingHitokoto {
+                        TimelineView()
+                            .environmentObject(store)
+                            .environmentObject(playerManager)
+                            .frame(height: timelineHeight)
+                    }
 
-                    TextInputView()
+                    TextInputView(onEditingChange: { isEditingHitokoto = $0 })
                         .environmentObject(store)
                         .environmentObject(playerManager)
-                        .frame(height: editorHeight)
+                        .frame(height: isEditingHitokoto ? geo.size.height : editorHeight)
                 }
                 .padding(.horizontal, 12)
             }
