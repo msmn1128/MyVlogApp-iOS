@@ -386,6 +386,14 @@ class ExportManager: ObservableObject {
 
     private func buildTextLayer(clip: VlogClip, canvas: CGSize, totalSeconds: Double) -> CALayer? {
         guard !clip.texts.isEmpty else { return nil }
+
+        // AVVideoCompositionCoreAnimationToolはUIView非経由の素のCALayerツリーを描画するため、
+        // 暗黙アニメーション（プロパティ変更に自動で付くフェード等）が有効なまま。無効化しておかないと
+        // 書き出し直後の数フレームだけ文字が出ない、という既知の症状が起きる。
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+
         let parent = CALayer()
         parent.frame = CGRect(origin: .zero, size: canvas)
         parent.isGeometryFlipped = true  // use UIKit-like top-left origin

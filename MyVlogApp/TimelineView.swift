@@ -58,15 +58,16 @@ struct TimelineView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(Array(store.clips.enumerated()), id: \.element.id) { idx, clip in
-                        ClipTile(
-                            clip:       clip,
-                            isSelected: idx == store.selectedIndex,
-                            onToggleMute: { store.toggleMute(at: idx) }
-                        )
-                        .id(idx)
-                        .onTapGesture {
-                            store.selectedIndex = idx
-                        }
+                        ClipTile(clip: clip, isSelected: idx == store.selectedIndex)
+                            .id(idx)
+                            .onTapGesture {
+                                store.selectedIndex = idx
+                            }
+                            // Android版ClipTile: タップ=選択、長押し=ミュート切替（combinedClickable）
+                            .onLongPressGesture(minimumDuration: 0.5) {
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                store.toggleMute(at: idx)
+                            }
                     }
                 }
                 .padding(.vertical, 6)
@@ -81,7 +82,6 @@ struct TimelineView: View {
 private struct ClipTile: View {
     let clip:       VlogClip
     let isSelected: Bool
-    let onToggleMute: () -> Void
 
     @State private var thumbnail: UIImage? = nil
     @Environment(\.colorScheme) var colorScheme
@@ -115,10 +115,20 @@ private struct ClipTile: View {
                     .lineLimit(1)
                     .shadow(radius: 1)
 
-                Text(durationLabel(clip.trimmedDurationMs))
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.8))
-                    .shadow(radius: 1)
+                HStack(spacing: 4) {
+                    Text(durationLabel(clip.trimmedDurationMs))
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.8))
+                        .shadow(radius: 1)
+
+                    // ミュート中のクリップは長押ししないと気付けないので、常時アイコンで示す
+                    // （Android: ClipTileのVolumeOffアイコンと同じ、非タップの表示専用）
+                    if clip.isMuted {
+                        Image(systemName: "speaker.slash.fill")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.white.opacity(0.8))
+                    }
+                }
             }
             .padding(5)
             .frame(width: 80, height: 90, alignment: .bottomLeading)
@@ -129,19 +139,6 @@ private struct ClipTile: View {
                     endPoint: .bottom
                 )
             )
-
-            // Mute toggle
-            Button(action: onToggleMute) {
-                Image(systemName: clip.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.white)
-                    .padding(4)
-                    .background(clip.isMuted ? Color.red.opacity(0.85) : Color.black.opacity(0.45))
-                    .clipShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .padding(4)
-            .frame(width: 80, height: 90, alignment: .topLeading)
 
             // Split badge
             if clip.texts.count > 1 {

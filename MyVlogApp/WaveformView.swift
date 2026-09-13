@@ -22,6 +22,11 @@ struct WaveformView: View {
         case movingTrim(originalStart: Int64, anchorX: CGFloat, wasPlaying: Bool)
     }
 
+    private var isMovingTrim: Bool {
+        if case .movingTrim = drag { return true }
+        return false
+    }
+
     private let handleW:    CGFloat = 12
     private let handleHit:  CGFloat = 28
     private let railH:      CGFloat = 3
@@ -98,10 +103,11 @@ struct WaveformView: View {
                      with: .color(inRange ? AppColors.waveformFill : AppColors.waveformDim))
         }
 
-        // ── Trim range rails (top and bottom) ──
+        // ── Trim range rails (top and bottom)。区間ごと移動中は太くする（Android: isMovingTrim） ──
         let trimW = rightX - leftX
-        ctx.fill(Path(CGRect(x: leftX, y: 0,          width: trimW, height: railH)), with: .color(AppColors.primary))
-        ctx.fill(Path(CGRect(x: leftX, y: h - railH,  width: trimW, height: railH)), with: .color(AppColors.primary))
+        let activeRailH = isMovingTrim ? railH + 2 : railH
+        ctx.fill(Path(CGRect(x: leftX, y: 0,               width: trimW, height: activeRailH)), with: .color(AppColors.primary))
+        ctx.fill(Path(CGRect(x: leftX, y: h - activeRailH, width: trimW, height: activeRailH)), with: .color(AppColors.primary))
 
         // ── Split lines ──
         let splitColor = AppColors.splitLine(colorScheme)
@@ -156,6 +162,8 @@ struct WaveformView: View {
                 let lx  = xCoord(ms: clip.startMs, dur: dur, w: w)
                 let rx  = xCoord(ms: clip.endMs,   dur: dur, w: w)
                 if sx > lx && sx < rx {
+                    // バッジをタップすると区切りへ正確にシークする（許容誤差の外から「解除」を
+                    // 押せるようにするための導線。以前は表示専用でタップできなかった）
                     Text("\(idx + 2)")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(.white)
@@ -163,11 +171,14 @@ struct WaveformView: View {
                         .background(splitColor)
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                         .position(x: sx, y: size.height * 0.14)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            playerManager.seek(to: splitMs)
+                        }
                 }
             }
         }
         .frame(width: size.width, height: size.height)
-        .allowsHitTesting(false)
     }
 
     // MARK: - Gesture handling
@@ -293,6 +304,7 @@ struct WaveformView: View {
             guard case .pendingBody = drag, let clip = store.selectedClip else { return }
             let wasPlaying = playerManager.isPlaying
             if wasPlaying { playerManager.pause() }
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             drag = .movingTrim(originalStart: clip.startMs, anchorX: downX, wasPlaying: wasPlaying)
         }
     }
