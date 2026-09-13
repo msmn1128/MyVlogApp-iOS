@@ -2,6 +2,7 @@ import AVFoundation
 import Combine
 import UIKit
 import Photos
+import UserNotifications
 
 // MARK: - ExportManager
 
@@ -12,18 +13,54 @@ class ExportManager: ObservableObject {
     @Published var message:     String = ""
 
     private var exportTask: Task<Void, Never>?
+    /// アプリがバックグラウンドへ回っても書き出しを続けるための延命申請
+    /// （Android: VlogExportServiceのフォアグラウンドサービス化に相当）
+    private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
 
     func startExport(clips: [VlogClip], timelineMuted: Bool = false, includeTitle: Bool = true) {
         guard !isExporting, !clips.isEmpty else { return }
         isExporting = true
         progress    = 0
         message     = includeTitle ? "タイトルを作成中..." : "クリップを処理中..."
+        beginBackgroundTask()
         exportTask  = Task { await runExport(clips: clips, timelineMuted: timelineMuted, includeTitle: includeTitle) }
     }
 
     func cancel() {
         exportTask?.cancel()
         isExporting = false
+        endBackgroundTask()
+    }
+
+    // MARK: - Background execution
+
+    private func beginBackgroundTask() {
+        backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "VlogExport") { [weak self] in
+            // OSに与えられた延長時間を使い切った＝ここで畳むしかない
+            self?.exportTask?.cancel()
+            self?.endBackgroundTask()
+        }
+    }
+
+    private func endBackgroundTask() {
+        guard backgroundTaskID != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundTaskID)
+        backgroundTaskID = .invalid
+    }
+
+    /// 書き出し完了をローカル通知で知らせる（Android: 完了時のToast「ギャラリーに保存しました」相当。
+    /// バックグラウンドで書き出しが終わった場合に特に役立つ）
+    private func notifyCompletion(title: String, body: String) {
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body  = body
+            content.sound = .default
+            let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+            center.add(request)
+        }
     }
 
     // MARK: - Main pipeline
@@ -64,13 +101,16 @@ class ExportManager: ObservableObject {
             try await saveToPhotoLibrary(url: merged)
             progress = 1.0
             update("完了")
+            notifyCompletion(title: "書き出し完了", body: "ギャラリーに保存しました")
         } catch is CancellationError {
             update("")
         } catch {
             update("エラー: \(error.localizedDescription)")
+            notifyCompletion(title: "書き出しに失敗しました", body: error.localizedDescription)
         }
         for url in tempFiles { try? FileManager.default.removeItem(at: url) }
         isExporting = false
+        endBackgroundTask()
     }
 
     // MARK: - Title card (AVAssetWriter, 2s black + text)
