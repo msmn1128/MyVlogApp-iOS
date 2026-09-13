@@ -75,10 +75,9 @@ struct WaveformView: View {
                     .onEnded   { v in onDragEnd(v, size: sz) }
             )
         }
-        .task(id: store.selectedClip?.id) {
-            refreshViewportIfIdle(force: true)
-            await loadWaveform()
-        }
+        .onAppear { refreshViewportIfIdle(force: true) }
+        .onChange(of: store.selectedClip?.id) { _, _ in refreshViewportIfIdle(force: true) }
+        .task(id: store.selectedClip?.id) { await loadWaveform() }
         .onChange(of: store.selectedClip?.startMs) { _, _ in refreshViewportIfIdle() }
         .onChange(of: store.selectedClip?.endMs)   { _, _ in refreshViewportIfIdle() }
     }
@@ -87,16 +86,25 @@ struct WaveformView: View {
     // The time axis occupies [handleW, w-handleW] so handles never overflow.
     // ms は絶対時間、表示は viewStartMs...viewEndMs のズーム範囲にマッピングする。
 
-    private var viewSpanMs: CGFloat { CGFloat(max(1, viewEndMs - viewStartMs)) }
+    /// viewStartMs/viewEndMsが未初期化（0...0）でも壊れた極小レンジにならないよう、
+    /// その場合はクリップ全長へフォールバックする。
+    private func effectiveViewport(durationMs: Int64) -> (start: Int64, end: Int64) {
+        if viewEndMs > viewStartMs { return (viewStartMs, viewEndMs) }
+        return (0, max(1, durationMs))
+    }
 
-    private func xCoord(ms: Int64, w: CGFloat) -> CGFloat {
+    private func xCoord(ms: Int64, w: CGFloat, durationMs: Int64) -> CGFloat {
         guard w > 2 * handleW else { return handleW }
-        return handleW + (CGFloat(ms) - CGFloat(viewStartMs)) / viewSpanMs * (w - 2 * handleW)
+        let vp = effectiveViewport(durationMs: durationMs)
+        let span = CGFloat(max(1, vp.end - vp.start))
+        return handleW + (CGFloat(ms) - CGFloat(vp.start)) / span * (w - 2 * handleW)
     }
 
     private func msAt(x: CGFloat, w: CGFloat, durationMs: Int64) -> Int64 {
         guard w > 2 * handleW else { return 0 }
-        let raw = CGFloat(viewStartMs) + (x - handleW) / (w - 2 * handleW) * viewSpanMs
+        let vp = effectiveViewport(durationMs: durationMs)
+        let span = CGFloat(max(1, vp.end - vp.start))
+        let raw = CGFloat(vp.start) + (x - handleW) / (w - 2 * handleW) * span
         return Int64(max(0, min(CGFloat(durationMs), raw)))
     }
 
@@ -150,8 +158,8 @@ struct WaveformView: View {
         guard let clip = store.selectedClip else { return }
         let w   = size.width
         let h   = size.height
-        let leftX  = xCoord(ms: clip.startMs, w: w)
-        let rightX = xCoord(ms: clip.endMs, w: w)
+        let leftX  = xCoord(ms: clip.startMs, w: w, durationMs: clip.durationMs)
+        let rightX = xCoord(ms: clip.endMs, w: w, durationMs: clip.durationMs)
 
         // ── Waveform bars (fill the time-axis region only) ──
         let bins     = waveform.isEmpty ? Array(repeating: Float(0.08), count: 240) : waveform
@@ -180,7 +188,7 @@ struct WaveformView: View {
         // ── Split lines ──
         let splitColor = AppColors.splitLine(colorScheme)
         for splitMs in clip.splitPoints {
-            let sx = xCoord(ms: splitMs, w: w)
+            let sx = xCoord(ms: splitMs, w: w, durationMs: clip.durationMs)
             guard sx > leftX && sx < rightX else { continue }
             var path = Path()
             path.move(to: CGPoint(x: sx, y: railH + 1))
@@ -195,7 +203,7 @@ struct WaveformView: View {
         // ── Playhead ──
         let posMs   = playerManager.currentTimeMs
         let clamped = max(clip.startMs, min(clip.endMs, posMs))
-        let playX   = xCoord(ms: clamped, w: w)
+        let playX   = xCoord(ms: clamped, w: w, durationMs: clip.durationMs)
         var headPath = Path()
         headPath.move(to: CGPoint(x: playX, y: railH + 1))
         headPath.addLine(to: CGPoint(x: playX, y: h - railH - 1))
@@ -226,9 +234,9 @@ struct WaveformView: View {
 
         return ZStack(alignment: .topLeading) {
             ForEach(Array(clip.splitPoints.enumerated()), id: \.offset) { idx, splitMs in
-                let sx  = xCoord(ms: splitMs, w: w)
-                let lx  = xCoord(ms: clip.startMs, w: w)
-                let rx  = xCoord(ms: clip.endMs, w: w)
+                let sx  = xCoord(ms: splitMs, w: w, durationMs: clip.durationMs)
+                let lx  = xCoord(ms: clip.startMs, w: w, durationMs: clip.durationMs)
+                let rx  = xCoord(ms: clip.endMs, w: w, durationMs: clip.durationMs)
                 if sx > lx && sx < rx {
                     // バッジをタップすると区切りへ正確にシークする（許容誤差の外から「解除」を
                     // 押せるようにするための導線。以前は表示専用でタップできなかった）
@@ -254,8 +262,8 @@ struct WaveformView: View {
     private func onDragChange(_ value: DragGesture.Value, size: CGSize) {
         guard let clip = store.selectedClip else { return }
         let w   = size.width
-        let leftX  = xCoord(ms: clip.startMs, w: w)
-        let rightX = xCoord(ms: clip.endMs, w: w)
+        let leftX  = xCoord(ms: clip.startMs, w: w, durationMs: clip.durationMs)
+        let rightX = xCoord(ms: clip.endMs, w: w, durationMs: clip.durationMs)
 
         // Determine mode on first event (translation ≈ zero)。
         // Android hitTestTrim: 端 > 分割ライン > 本体、の優先順で一番近いものを掴む。
@@ -268,7 +276,7 @@ struct WaveformView: View {
             var nearestSplitIndex: Int? = nil
             var nearestSplitDist: CGFloat = .greatestFiniteMagnitude
             for (i, seg) in clip.texts.enumerated() where i > 0 {
-                let sx = xCoord(ms: seg.startMs, w: w)
+                let sx = xCoord(ms: seg.startMs, w: w, durationMs: clip.durationMs)
                 let d  = abs(sl - sx)
                 if d < nearestSplitDist { nearestSplitDist = d; nearestSplitIndex = i }
             }
@@ -276,7 +284,7 @@ struct WaveformView: View {
             if nearestHandleDist <= handleHit && nearestHandleDist <= nearestSplitDist {
                 drag = dLeft <= dRight ? .trimLeft(grabOffset: sl - leftX) : .trimRight(grabOffset: sl - rightX)
             } else if let splitIdx = nearestSplitIndex, nearestSplitDist <= handleHit {
-                let splitX = xCoord(ms: clip.texts[splitIdx].startMs, w: w)
+                let splitX = xCoord(ms: clip.texts[splitIdx].startMs, w: w, durationMs: clip.durationMs)
                 drag = .splitMove(index: splitIdx, grabOffset: sl - splitX)
             } else {
                 drag = .pendingBody(downX: sl)
@@ -325,7 +333,9 @@ struct WaveformView: View {
             playerManager.seek(to: seekMs)
 
         case .movingTrim(let originalStart, let anchorX, _):
-            let pxPerMs = (w - 2 * handleW) / viewSpanMs
+            let vp = effectiveViewport(durationMs: clip.durationMs)
+            let span = CGFloat(max(1, vp.end - vp.start))
+            let pxPerMs = (w - 2 * handleW) / span
             guard pxPerMs > 0 else { return }
             let deltaMs = Int64((loc - anchorX) / pxPerMs)
             if let result = store.moveTrim(targetStartMs: originalStart + deltaMs) {
