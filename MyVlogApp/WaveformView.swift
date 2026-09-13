@@ -9,17 +9,24 @@ struct WaveformView: View {
     @State private var waveform:  [Float] = []
     @State private var isLoading: Bool    = false
     @State private var drag:      ActiveDrag = .none
+    @State private var pendingBodyTask: Task<Void, Never>? = nil
 
     private enum ActiveDrag {
         case none
         case trimLeft(grabOffset: CGFloat)
         case trimRight(grabOffset: CGFloat)
+        case splitMove(index: Int, grabOffset: CGFloat)
+        /// 本体を触った直後：動くか、長押しタイムアウトが来るまで様子見（Android: dragBodyOrMove）
+        case pendingBody(downX: CGFloat)
         case seeking(wasPlaying: Bool)
+        case movingTrim(originalStart: Int64, anchorX: CGFloat, wasPlaying: Bool)
     }
 
     private let handleW:    CGFloat = 12
     private let handleHit:  CGFloat = 28
     private let railH:      CGFloat = 3
+    private let moveSlop:   CGFloat = 8
+    private let longPressSeconds: Double = 0.5
 
     var body: some View {
         GeometryReader { geo in
@@ -44,7 +51,7 @@ struct WaveformView: View {
             .gesture(
                 DragGesture(minimumDistance: 0, coordinateSpace: .local)
                     .onChanged { v in onDragChange(v, size: sz) }
-                    .onEnded   { v in onDragEnd(v) }
+                    .onEnded   { v in onDragEnd(v, size: sz) }
             )
         }
         .task(id: store.selectedClip?.id) { await loadWaveform() }
@@ -172,18 +179,30 @@ struct WaveformView: View {
         let leftX  = xCoord(ms: clip.startMs, dur: dur, w: w)
         let rightX = xCoord(ms: clip.endMs,   dur: dur, w: w)
 
-        // Determine mode on first event (translation ≈ zero)
+        // Determine mode on first event (translation ≈ zero)。
+        // Android hitTestTrim: 端 > 分割ライン > 本体、の優先順で一番近いものを掴む。
         if case .none = drag {
             let sl = value.startLocation.x
             let dLeft  = abs(sl - leftX)
             let dRight = abs(sl - rightX)
-            if dLeft < handleHit && (dLeft <= dRight) {
-                drag = .trimLeft(grabOffset: sl - leftX)
-            } else if dRight < handleHit {
-                drag = .trimRight(grabOffset: sl - rightX)
+            let nearestHandleDist = min(dLeft, dRight)
+
+            var nearestSplitIndex: Int? = nil
+            var nearestSplitDist: CGFloat = .greatestFiniteMagnitude
+            for (i, seg) in clip.texts.enumerated() where i > 0 {
+                let sx = xCoord(ms: seg.startMs, dur: dur, w: w)
+                let d  = abs(sl - sx)
+                if d < nearestSplitDist { nearestSplitDist = d; nearestSplitIndex = i }
+            }
+
+            if nearestHandleDist <= handleHit && nearestHandleDist <= nearestSplitDist {
+                drag = dLeft <= dRight ? .trimLeft(grabOffset: sl - leftX) : .trimRight(grabOffset: sl - rightX)
+            } else if let splitIdx = nearestSplitIndex, nearestSplitDist <= handleHit {
+                let splitX = xCoord(ms: clip.texts[splitIdx].startMs, dur: dur, w: w)
+                drag = .splitMove(index: splitIdx, grabOffset: sl - splitX)
             } else {
-                drag = .seeking(wasPlaying: playerManager.isPlaying)
-                if playerManager.isPlaying { playerManager.pause() }
+                drag = .pendingBody(downX: sl)
+                schedulePendingBodyTimeout(downX: sl)
             }
         }
 
@@ -205,20 +224,77 @@ struct WaveformView: View {
             playerManager.seek(to: newMs)
             playerManager.updateTrimBounds(startMs: clip.startMs, endMs: newMs)
 
+        case .splitMove(let index, let off):
+            let newMs = msAt(x: loc - off, dur: dur, w: w)
+            if let clamped = store.moveSplit(index: index, newAtMs: newMs) {
+                playerManager.seek(to: clamped)
+            }
+
+        case .pendingBody(let downX):
+            let movedX = abs(value.location.x - downX)
+            let movedY = abs(value.translation.height)
+            if movedX > moveSlop || movedY > moveSlop {
+                pendingBodyTask?.cancel(); pendingBodyTask = nil
+                let wasPlaying = playerManager.isPlaying
+                if wasPlaying { playerManager.pause() }
+                drag = .seeking(wasPlaying: wasPlaying)
+                let seekMs = max(clip.startMs, min(clip.endMs, msAt(x: loc, dur: dur, w: w)))
+                playerManager.seek(to: seekMs)
+            }
+
         case .seeking:
             let seekMs = max(clip.startMs, min(clip.endMs, msAt(x: loc, dur: dur, w: w)))
             playerManager.seek(to: seekMs)
+
+        case .movingTrim(let originalStart, let anchorX, _):
+            let pxPerMs = dur > 0 ? (w - 2 * handleW) / dur : 0
+            guard pxPerMs > 0 else { return }
+            let deltaMs = Int64((loc - anchorX) / pxPerMs)
+            if let result = store.moveTrim(targetStartMs: originalStart + deltaMs) {
+                playerManager.updateTrimBounds(startMs: result.startMs, endMs: result.endMs)
+                playerManager.seek(to: max(result.startMs, min(result.endMs, msAt(x: loc, dur: dur, w: w))))
+            }
 
         case .none:
             break
         }
     }
 
-    private func onDragEnd(_ value: DragGesture.Value) {
-        if case .seeking(let wasPlaying) = drag, wasPlaying {
-            playerManager.play()
+    private func onDragEnd(_ value: DragGesture.Value, size: CGSize) {
+        pendingBodyTask?.cancel(); pendingBodyTask = nil
+
+        switch drag {
+        case .seeking(let wasPlaying):
+            if wasPlaying { playerManager.play() }
+
+        case .pendingBody(let downX):
+            // 動かさずに離した＝タップ。その場へ頭出し（Android: DragOutcome.Released）
+            if let clip = store.selectedClip {
+                let dur = CGFloat(clip.durationMs)
+                let seekMs = max(clip.startMs, min(clip.endMs, msAt(x: downX, dur: dur, w: size.width)))
+                playerManager.seek(to: seekMs)
+            }
+
+        case .movingTrim(_, _, let wasPlaying):
+            if wasPlaying { playerManager.play() }
+
+        default:
+            break
         }
         drag = .none
+    }
+
+    /// 動かさず[longPressSeconds]経過したら「区間ごと移動」へ切り替える（Android: dragBodyOrMove）
+    private func schedulePendingBodyTimeout(downX: CGFloat) {
+        pendingBodyTask?.cancel()
+        pendingBodyTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(longPressSeconds * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            guard case .pendingBody = drag, let clip = store.selectedClip else { return }
+            let wasPlaying = playerManager.isPlaying
+            if wasPlaying { playerManager.pause() }
+            drag = .movingTrim(originalStart: clip.startMs, anchorX: downX, wasPlaying: wasPlaying)
+        }
     }
 
     // MARK: - Waveform loading

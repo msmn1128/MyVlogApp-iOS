@@ -11,6 +11,7 @@ struct ActionButtons: View {
     @Binding var showFilePicker:    Bool
 
     @Environment(\.colorScheme) var colorScheme
+    @State private var suppressTapExport = false
 
     var body: some View {
         HStack(spacing: 8) {
@@ -49,8 +50,10 @@ struct ActionButtons: View {
                         .outlinedPill(colorScheme: colorScheme)
                 }
             } else {
+                // Android版ExportButtonと同じく、タップ=タイトルカードあり、長押し=タイトルカードなし
                 Button {
-                    NotificationCenter.default.post(name: .startExport, object: nil)
+                    if suppressTapExport { suppressTapExport = false; return }
+                    postStartExport(includeTitle: true)
                 } label: {
                     Text("書き出し")
                         .lineLimit(1)
@@ -58,8 +61,22 @@ struct ActionButtons: View {
                         .tonalPill(enabled: !store.clips.isEmpty, colorScheme: colorScheme)
                 }
                 .disabled(store.clips.isEmpty)
+                .simultaneousGesture(
+                    LongPressGesture(minimumDuration: 0.5).onEnded { _ in
+                        guard !store.clips.isEmpty else { return }
+                        suppressTapExport = true
+                        postStartExport(includeTitle: false)
+                    }
+                )
             }
         }
+    }
+
+    private func postStartExport(includeTitle: Bool) {
+        NotificationCenter.default.post(
+            name: .startExport, object: nil,
+            userInfo: ["includeTitle": includeTitle]
+        )
     }
 }
 

@@ -47,6 +47,9 @@ struct ContentView: View {
     @State private var importProgress: Double = 0.0
     @State private var importMessage:  String = ""
 
+    // キーボード表示中はひとこと欄を広げる（Android: VlogAppScreen imeVisible分岐）
+    @State private var isKeyboardVisible: Bool = false
+
     @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
@@ -73,6 +76,10 @@ struct ContentView: View {
                     SavedProjectsView(onDismiss: { showSavedProjects = false })
                         .environmentObject(store)
                 }
+
+                if let toast = store.toastMessage {
+                    ToastView(text: toast)
+                }
             }
             .onChange(of: sz) { _, newSz in
                 isLandscape = newSz.width > newSz.height
@@ -97,9 +104,17 @@ struct ContentView: View {
         .onChange(of: store.timelineMuted) {
             playerManager.applyMuteState(for: store.selectedClip)
         }
+        // キーボード表示中はタイムライン:ひとことの比率をAndroid版のimeVisible分岐に合わせて変える
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+            isKeyboardVisible = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            isKeyboardVisible = false
+        }
         // Export trigger
-        .onReceive(NotificationCenter.default.publisher(for: .startExport)) { _ in
-            exportManager.startExport(clips: store.clips, timelineMuted: store.timelineMuted)
+        .onReceive(NotificationCenter.default.publisher(for: .startExport)) { note in
+            let includeTitle = (note.userInfo?["includeTitle"] as? Bool) ?? true
+            exportManager.startExport(clips: store.clips, timelineMuted: store.timelineMuted, includeTitle: includeTitle)
         }
         // Photo picker
         .photosPicker(isPresented: $showPhotoPicker, selection: $photoItems,
@@ -162,8 +177,12 @@ struct ContentView: View {
     }
 
     /// Android: VlogAppScreen.timelineWeight / editorWeight（imeVisible=false）を正規化した比率
-    private var timelineHeightRatio: CGFloat { 0.40 / (0.40 + 0.18) }
-    private var editorHeightRatio:   CGFloat { 0.18 / (0.40 + 0.18) }
+    private var timelineHeightRatio: CGFloat {
+        let t: CGFloat = isKeyboardVisible ? 0.20 : 0.40
+        let e: CGFloat = isKeyboardVisible ? 0.55 : 0.18
+        return t / (t + e)
+    }
+    private var editorHeightRatio: CGFloat { 1 - timelineHeightRatio }
 
     private func landscapeLayout(size: CGSize) -> some View {
         HStack(spacing: 10) {
@@ -251,6 +270,10 @@ struct ContentView: View {
 
         photoItems = []
         if !newClips.isEmpty { store.addClips(newClips) }
+        let skipped = items.count - newClips.count
+        if skipped > 0 {
+            store.showMessage("\(skipped) 件の動画は長さを取得できませんでした")
+        }
         try? await Task.sleep(nanoseconds: 100_000_000)
         isImporting = false
     }
@@ -318,6 +341,10 @@ struct ContentView: View {
         let newClips = loadedClips.map { $0.clip }
 
         if !newClips.isEmpty { store.addClips(newClips) }
+        let skipped = urls.count - newClips.count
+        if skipped > 0 {
+            store.showMessage("\(skipped) 件の動画は長さを取得できませんでした")
+        }
         try? await Task.sleep(nanoseconds: 100_000_000)
         isImporting = false
     }
@@ -428,6 +455,30 @@ struct ContentView: View {
         let tf = DateFormatter(); tf.dateFormat = "HH:mm"
         let df = DateFormatter(); df.dateFormat = "yyyy/MM/dd"
         return (tf.string(from: date), df.string(from: date))
+    }
+}
+
+// MARK: - Toast（Android: Toast相当の一時的な通知）
+
+struct ToastView: View {
+    let text: String
+
+    var body: some View {
+        VStack {
+            Spacer()
+            Text(text)
+                .font(.system(size: 13))
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                .background(Color.black.opacity(0.85))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .padding(.bottom, 24)
+                .padding(.horizontal, 24)
+                .transition(.opacity)
+        }
+        .allowsHitTesting(false)
+        .animation(.easeInOut(duration: 0.2), value: text)
     }
 }
 

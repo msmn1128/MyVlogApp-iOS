@@ -84,6 +84,8 @@ enum VlogLayout {
     static let titleVlogYOffset:  CGFloat = -70
     static let titleDateYOffset:  CGFloat = 80
     static let titleCardDuration: Double  = 2.0
+    /// タイトルカードのSFXを鳴らし始めるフレーム番号（1始まり、30fps）。Android: TITLE_SFX_FRAME_NUMBER
+    static let titleSfxFrameNumber: Int = 21
 
     /// Android: TOOLBAR_BUTTON_SIZE / TOOLBAR_ICON_SIZE
     static let toolbarButtonSize: CGFloat = 48

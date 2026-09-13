@@ -45,11 +45,11 @@ struct TimelineView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AppColors.card(colorScheme))
         .clipShape(RoundedRectangle(cornerRadius: 12))
-        .alert("すべて削除", isPresented: $showDeleteAllAlert) {
-            Button("削除", role: .destructive) { store.deleteAllClips() }
+        .alert("すべて削除しますか", isPresented: $showDeleteAllAlert) {
+            Button("すべて削除", role: .destructive) { store.deleteAllClips() }
             Button("キャンセル", role: .cancel) {}
         } message: {
-            Text("すべてのクリップを削除します。Undoで戻せます。")
+            Text("タイムラインの動画をすべて外します。「もとに戻す」で元に戻せます。")
         }
     }
 

@@ -25,6 +25,9 @@ class VlogStore: ObservableObject {
     @Published var isContinuousPlay: Bool
     @Published var savedProjects: [SavedProject] = []
     @Published var excludedCount: Int = 0
+    /// 一時的な通知メッセージ（Android: VlogEvent.Message / Toast相当）
+    @Published var toastMessage: String? = nil
+    private var toastTask: Task<Void, Never>?
     /// タイムライン全体のミュート。クリップ個別の`isMuted`とは独立していて、
     /// こちらがonの間はどのクリップも音声が出ない（Android: VlogViewModel.timelineMuted）
     @Published var timelineMuted: Bool
@@ -186,6 +189,54 @@ class VlogStore: ObservableObject {
         updateTrim(startMs: startMs, endMs: min(startMs + lengthMs, clip.durationMs))
     }
 
+    /// トリミング区間を長さそのままで前後に移動する（Android: moveTrim）。
+    /// ひとことの区切り（先頭は除く）も同じ分だけ一緒にずらす。
+    @discardableResult
+    func moveTrim(targetStartMs: Int64) -> (startMs: Int64, endMs: Int64)? {
+        guard var clip = selectedClip else { return nil }
+        let span = clip.trimmedDurationMs
+        guard span > 0 else { return nil }
+
+        let maxStart = max(0, clip.durationMs - span)
+        let newStart = min(max(targetStartMs, 0), maxStart)
+        guard newStart != clip.startMs else { return (clip.startMs, clip.endMs) }
+        let delta   = newStart - clip.startMs
+        let newEnd  = newStart + span
+
+        recordForUndo(tag: "trimMove:\(selectedIndex ?? -1)")
+        clip.startMs = newStart
+        clip.endMs   = newEnd
+        clip.texts = clip.texts.map { seg in
+            guard seg.startMs != 0 else { return seg }
+            var s = seg
+            s.startMs = min(max(seg.startMs + delta, 1), max(clip.durationMs, 1))
+            return s
+        }
+        updateSelectedClip(clip)
+        scheduleAutoSave()
+        return (newStart, newEnd)
+    }
+
+    /// ひとことの区切りをひとつ、時間軸上で動かす（Android: moveSplit）。
+    /// 前後の区切り（無ければクリップの端／トリム終端）を越えないようクランプする。
+    @discardableResult
+    func moveSplit(index: Int, newAtMs: Int64) -> Int64? {
+        guard var clip = selectedClip, clip.texts.indices.contains(index), index != 0 else { return nil }
+        let minGap = VlogClip.splitMinDistanceMs
+        let lowerBound = clip.texts[index - 1].startMs + minGap
+        let upperBound = (clip.texts.indices.contains(index + 1) ? clip.texts[index + 1].startMs : clip.endMs) - minGap
+        guard lowerBound <= upperBound else { return nil }
+
+        let clamped = min(max(newAtMs, lowerBound), upperBound)
+        guard clamped != clip.texts[index].startMs else { return clamped }
+
+        recordForUndo(tag: "splitMove:\(selectedIndex ?? -1):\(index)")
+        clip.texts[index].startMs = clamped
+        updateSelectedClip(clip)
+        scheduleAutoSave()
+        return clamped
+    }
+
     // MARK: - Text / Split
 
     func updateText(_ text: String, segmentIndex: Int) {
@@ -245,6 +296,19 @@ class VlogStore: ObservableObject {
         scheduleAutoSave()
     }
 
+    // MARK: - Toast
+
+    /// 数秒で自動的に消える通知メッセージを出す（Android: Toast相当）
+    func showMessage(_ text: String) {
+        toastTask?.cancel()
+        toastMessage = text
+        toastTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run { self?.toastMessage = nil }
+        }
+    }
+
     // MARK: - Auto-save
 
     func scheduleAutoSave() {
@@ -286,6 +350,10 @@ class VlogStore: ObservableObject {
         excludedCount = excluded
         if let si = savedIndex, loaded.indices.contains(si) { selectedIndex = si }
         else if !loaded.isEmpty { selectedIndex = 0 }
+
+        if excluded > 0 {
+            showMessage("\(excluded) 件の動画は復元できませんでした（移動・削除されたか、アクセス権限が取り消されています）")
+        }
     }
 
     // MARK: - Named saves

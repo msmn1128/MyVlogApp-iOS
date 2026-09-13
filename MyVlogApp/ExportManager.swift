@@ -13,12 +13,12 @@ class ExportManager: ObservableObject {
 
     private var exportTask: Task<Void, Never>?
 
-    func startExport(clips: [VlogClip], timelineMuted: Bool = false) {
+    func startExport(clips: [VlogClip], timelineMuted: Bool = false, includeTitle: Bool = true) {
         guard !isExporting, !clips.isEmpty else { return }
         isExporting = true
         progress    = 0
-        message     = "タイトルを作成中..."
-        exportTask  = Task { await runExport(clips: clips, timelineMuted: timelineMuted) }
+        message     = includeTitle ? "タイトルを作成中..." : "クリップを処理中..."
+        exportTask  = Task { await runExport(clips: clips, timelineMuted: timelineMuted, includeTitle: includeTitle) }
     }
 
     func cancel() {
@@ -28,21 +28,30 @@ class ExportManager: ObservableObject {
 
     // MARK: - Main pipeline
 
-    private func runExport(clips: [VlogClip], timelineMuted: Bool) async {
+    private func runExport(clips: [VlogClip], timelineMuted: Bool, includeTitle: Bool) async {
         var tempFiles: [URL] = []
         do {
-            update("タイトルを作成中...")
-            let titleURL = try await createTitleCard(clips: clips)
-            tempFiles.append(titleURL)
-            guard !Task.isCancelled else { throw CancellationError() }
+            var clipURLs: [URL] = []
+            if includeTitle {
+                update("タイトルを作成中...")
+                var titleURL = try await createTitleCard(clips: clips)
+                tempFiles.append(titleURL)
+                if !timelineMuted {
+                    let withSfx = try await addTitleSfx(to: titleURL)
+                    tempFiles.append(withSfx)
+                    titleURL = withSfx
+                }
+                clipURLs.append(titleURL)
+                guard !Task.isCancelled else { throw CancellationError() }
+            }
 
-            var clipURLs: [URL] = [titleURL]
+            let progressDenominator = Double(clips.count + (includeTitle ? 2 : 1))
             for (i, clip) in clips.enumerated() {
                 update("クリップ \(i + 1)/\(clips.count) を処理中...")
                 let url = try await processClip(clip, silent: clip.isSilentInExport(timelineMuted: timelineMuted))
                 clipURLs.append(url)
                 tempFiles.append(url)
-                progress = Double(i + 1) / Double(clips.count + 2)
+                progress = Double(i + 1) / progressDenominator
                 guard !Task.isCancelled else { throw CancellationError() }
             }
 
@@ -105,6 +114,45 @@ class ExportManager: ObservableObject {
         await writer.finishWriting()
         if let err = writer.error { throw err }
         return url
+    }
+
+    /// タイトルカード（映像のみ）にtitle.mp3を合成する。
+    /// SFXはTITLE_SFX_FRAME_NUMBERフレーム目（30fpsなので約0.67秒後）から鳴り始め、
+    /// タイトルカードの尺ぴったりに切る（Android: titleSfxDelayMs / atrim相当）。
+    private func addTitleSfx(to videoURL: URL) async throws -> URL {
+        guard let sfxURL = Bundle.main.url(forResource: "title", withExtension: "mp3") else {
+            return videoURL
+        }
+
+        let videoAsset = AVURLAsset(url: videoURL)
+        let sfxAsset   = AVURLAsset(url: sfxURL)
+        guard let videoTrack = try await videoAsset.loadTracks(withMediaType: .video).first,
+              let sfxTrack   = try await sfxAsset.loadTracks(withMediaType: .audio).first else {
+            return videoURL
+        }
+
+        let composition = AVMutableComposition()
+        let compVideo = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)!
+        let videoDuration = try await videoAsset.load(.duration)
+        try compVideo.insertTimeRange(CMTimeRange(start: .zero, duration: videoDuration), of: videoTrack, at: .zero)
+
+        let delaySeconds = Double(VlogLayout.titleSfxFrameNumber - 1) / 30.0
+        let delayTime    = CMTime(seconds: delaySeconds, preferredTimescale: 600)
+        let remaining    = videoDuration - delayTime
+        if remaining > .zero {
+            let sfxDuration  = try await sfxAsset.load(.duration)
+            let clippedRange = CMTimeRange(start: .zero, duration: min(sfxDuration, remaining))
+            let compAudio = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)!
+            try compAudio.insertTimeRange(clippedRange, of: sfxTrack, at: delayTime)
+        }
+
+        let outURL = tempURL("title_with_sfx")
+        guard let session = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else {
+            return videoURL
+        }
+        session.outputFileType = .mov
+        try await session.export(to: outURL, as: .mov)
+        return outURL
     }
 
     private func renderTitleFrame(size: CGSize, frame: Int, total: Int, dateText: String) -> CVPixelBuffer? {
