@@ -79,23 +79,33 @@ struct OperationBar: View {
     private var splitButton: some View {
         let posMs  = playerManager.currentTimeMs
         let isNear = store.selectedClip?.splitPointNear(positionMs: posMs) != nil
-        // "minus.bubble"はSF Symbolsに存在しない名前で、指定すると何も描画されず
-        // アイコンが消えて見える不具合になっていた。"minus.bubble"の組み合わせ自体が
-        // SF Symbolsに存在しないため、マイナス表記が要件なら"minus.circle.fill"
-        // （実在確認済み）を使う。
-        return CompactIconButton(
-            systemImage: isNear ? "minus.circle.fill" : "plus.bubble",
-            contentDescription: isNear ? "この区切りを解除" : "ここでひとことを分割",
-            enabled: store.selectedIndex != nil,
-            tint: AppColors.splitLine(colorScheme)
-        ) {
+        let enabled = store.selectedIndex != nil
+        let tint = AppColors.splitLine(colorScheme)
+
+        return Button {
             if isNear {
                 store.removeSplitNear(positionMs: posMs)
             } else if let newIdx = store.splitAt(positionMs: posMs),
                       let clip = store.selectedClip {
                 playerManager.seek(to: clip.texts[newIdx].startMs)
             }
+        } label: {
+            Group {
+                if isNear {
+                    // "minus.bubble"はSF Symbolsに存在しないため、"plus.bubble"と
+                    // 同じ吹き出しの中身だけマイナスに差し替えた自作アイコンにしている
+                    BubbleGlyphIcon(symbol: .minus)
+                } else {
+                    Image(systemName: "plus.bubble")
+                }
+            }
+            .font(.system(size: VlogLayout.toolbarIconSize * 0.82, weight: .regular))
+            .foregroundStyle(tint.opacity(enabled ? 1 : 0.38))
+            .frame(width: VlogLayout.toolbarButtonSize, height: VlogLayout.toolbarButtonSize)
         }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .accessibilityLabel(isNear ? "この区切りを解除" : "ここでひとことを分割")
     }
 
     // MARK: - Helpers
@@ -188,6 +198,30 @@ private struct TrimPresetButton: View {
         .buttonStyle(.plain)
         .disabled(!enabled)
         .padding(.horizontal, 3)
+    }
+}
+
+/// SF Symbolsに"minus.bubble"が無いため、"bubble"（吹き出し輪郭）に任意の記号を
+/// 重ねて自作する。plus.bubbleと見た目・線の太さを揃えるため同じフォントサイズ系で描く。
+private struct BubbleGlyphIcon: View {
+    enum Symbol { case minus }
+    let symbol: Symbol
+
+    var body: some View {
+        GeometryReader { geo in
+            let size = min(geo.size.width, geo.size.height)
+            ZStack {
+                Image(systemName: "bubble")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: size, height: size)
+                Rectangle()
+                    .frame(width: size * 0.34, height: size * 0.09)
+                    // 吹き出しの尻尾ぶん下寄りな見た目にならないよう、本体中心を少し上へ
+                    .offset(y: -size * 0.12)
+            }
+        }
+        .aspectRatio(1, contentMode: .fit)
     }
 }
 
