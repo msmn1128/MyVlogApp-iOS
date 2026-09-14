@@ -302,11 +302,7 @@ class VlogStore: ObservableObject {
     func showMessage(_ text: String) {
         toastTask?.cancel()
         toastMessage = text
-        toastTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 3_000_000_000)
-            guard !Task.isCancelled else { return }
-            await MainActor.run { self?.toastMessage = nil }
-        }
+        toastTask = ToastTimer.scheduleClear { [weak self] in self?.toastMessage = nil }
     }
 
     // MARK: - Auto-save
