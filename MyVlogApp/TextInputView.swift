@@ -19,14 +19,16 @@ struct TextInputView: View {
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
                     if let clip = store.selectedClip, clip.texts.count > 1 {
+                        Text("／\(clip.texts.count) 区間目を編集中")
+                            .font(.system(size: 11))
+                            .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
+                    }
+                    if let clip = store.selectedClip, clip.texts.count > 1 {
                         Text("\(segmentIndex + 1)")
                             .font(.system(size: 9, weight: .bold))
                             .foregroundStyle(AppColors.onSplitLine(colorScheme))
                             .padding(.horizontal, 4).padding(.vertical, 1)
                             .background(Capsule().fill(AppColors.splitLine(colorScheme)))
-                        Text("／\(clip.texts.count) 区間目を編集中")
-                            .font(.system(size: 11))
-                            .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
                     }
                     Spacer()
                 }
@@ -37,7 +39,7 @@ struct TextInputView: View {
                 // 開かない」問題を根本的に解消する。
                 NativeTextView(
                     text: $text,
-                    placeholder: store.selectedClip == nil ? "「動画を追加」から動画を選んでください" : "テロップを入力...",
+                    placeholder: store.selectedClip == nil ? "" : "テロップを入力...",
                     onBeginEditing: {
                         isEditing = true
                         playerManager.pause()
@@ -144,6 +146,7 @@ struct NativeTextView: UIViewRepresentable {
         tv.font = UIFont.systemFont(ofSize: 15)
         tv.backgroundColor = .clear
         tv.textColor = UIColor.label
+        tv.textAlignment = .center
         tv.text = text
         tv.isScrollEnabled = true
         tv.textContainerInset = UIEdgeInsets(top: 8, left: 6, bottom: 8, right: 6)
@@ -161,14 +164,16 @@ struct NativeTextView: UIViewRepresentable {
         pl.text = placeholder
         pl.font = UIFont.systemFont(ofSize: 15)
         pl.textColor = UIColor.placeholderText
+        pl.textAlignment = .center
         pl.translatesAutoresizingMaskIntoConstraints = false
         tv.addSubview(pl)
         context.coordinator.placeholderLabel = pl
 
         NSLayoutConstraint.activate([
-            pl.leadingAnchor.constraint(equalTo: tv.leadingAnchor, constant: 10),
-            pl.topAnchor.constraint(equalTo: tv.topAnchor, constant: 8),
-            pl.trailingAnchor.constraint(lessThanOrEqualTo: tv.trailingAnchor, constant: -10)
+            pl.leadingAnchor.constraint(greaterThanOrEqualTo: tv.leadingAnchor, constant: 10),
+            pl.trailingAnchor.constraint(lessThanOrEqualTo: tv.trailingAnchor, constant: -10),
+            pl.centerXAnchor.constraint(equalTo: tv.centerXAnchor),
+            pl.topAnchor.constraint(equalTo: tv.topAnchor, constant: 8)
         ])
         pl.isHidden = !text.isEmpty
 

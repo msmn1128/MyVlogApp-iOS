@@ -33,6 +33,24 @@ struct WaveformView: View {
         return false
     }
 
+    private var isLeftHandleActive: Bool {
+        if case .trimLeft = drag { return true }
+        return false
+    }
+
+    private var isRightHandleActive: Bool {
+        if case .trimRight = drag { return true }
+        return false
+    }
+
+    // つまみを掴んだ瞬間に太さが一段階で切り替わらないよう、太さそのものを補間する
+    // （Android版WaveformTrimmerのstartHandleScale/endHandleScaleと同じ狙い）。
+    // CanvasはSwiftUIのアニメーション機構と直接つながらないため、Animatableな
+    // 透明ビュー（HandleScaleAnimator）を経由してアニメーション中の値を毎フレーム
+    // 取り出し、Canvasが読むための@Stateへ橋渡ししている。
+    @State private var leftHandleScale:  CGFloat = 1
+    @State private var rightHandleScale: CGFloat = 1
+
     private var isDragIdle: Bool {
         if case .none = drag { return true }
         return false
@@ -68,6 +86,12 @@ struct WaveformView: View {
                 if isLoading {
                     ProgressView().tint(AppColors.primary)
                 }
+
+                // Canvas描画のハンドル太さをアニメーションさせるための透明な橋渡し役
+                HandleScaleAnimator(value: isLeftHandleActive ? 1.35 : 1) { leftHandleScale = $0 }
+                    .animation(.spring(response: 0.2, dampingFraction: 0.6), value: isLeftHandleActive)
+                HandleScaleAnimator(value: isRightHandleActive ? 1.35 : 1) { rightHandleScale = $0 }
+                    .animation(.spring(response: 0.2, dampingFraction: 0.6), value: isRightHandleActive)
             }
             .contentShape(Rectangle())
             .gesture(
@@ -188,8 +212,8 @@ struct WaveformView: View {
         }
 
         // ── Trim handles ──
-        drawHandle(ctx: ctx, x: leftX,  h: h, isLeft: true)
-        drawHandle(ctx: ctx, x: rightX, h: h, isLeft: false)
+        drawHandle(ctx: ctx, x: leftX,  h: h, isLeft: true,  scale: leftHandleScale)
+        drawHandle(ctx: ctx, x: rightX, h: h, isLeft: false, scale: rightHandleScale)
 
         // ── Playhead ──
         let posMs   = playerManager.currentTimeMs
@@ -203,11 +227,14 @@ struct WaveformView: View {
                  with: .color(.white))
     }
 
-    private func drawHandle(ctx: GraphicsContext, x: CGFloat, h: CGFloat, isLeft: Bool) {
-        let rx    = isLeft ? x - handleW : x
-        let rect  = CGRect(x: rx, y: 0, width: handleW, height: h)
-        ctx.fill(Path(roundedRect: rect, cornerRadius: 3), with: .color(AppColors.primary))
-        let midX = rx + handleW / 2
+    private func drawHandle(ctx: GraphicsContext, x: CGFloat, h: CGFloat, isLeft: Bool, scale: CGFloat) {
+        // 掴んでいる側は太さそのものをscaleぶん大きくする。トリム境界に接する辺
+        // （左つまみなら右辺、右つまみなら左辺）は動かさず、外側へだけ広がるようにする
+        let w     = handleW * scale
+        let rx    = isLeft ? x - w : x
+        let rect  = CGRect(x: rx, y: 0, width: w, height: h)
+        ctx.fill(Path(roundedRect: rect, cornerRadius: 3 * scale), with: .color(AppColors.primary))
+        let midX = rx + w / 2
         for dy: CGFloat in [-5, 0, 5] {
             var grip = Path()
             grip.move(to: CGPoint(x: midX - 2.5, y: h / 2 + dy))
@@ -229,8 +256,13 @@ struct WaveformView: View {
                 let lx  = xCoord(ms: clip.startMs, w: w, clip: clip)
                 let rx  = xCoord(ms: clip.endMs, w: w, clip: clip)
                 if sx > lx && sx < rx {
-                    // バッジをタップすると区切りへ正確にシークする（許容誤差の外から「解除」を
-                    // 押せるようにするための導線。以前は表示専用でタップできなかった）
+                    // バッジ自体には触らせない（表示専用）。以前はここに独自の
+                    // onTapGestureを付けていたが、親ZStackのDragGesture(minimumDistance: 0)と
+                    // 同じ領域に別のジェスチャー認識器が重なることでSwiftUI側の判定が乱れ、
+                    // 分割マーカーがある間はトリム範囲のタップがまるごと効かなくなる
+                    // 不具合の原因になっていた。区切り付近のタップは親のDragGestureの
+                    // ヒットテスト（onDragChangeのnearestSplitDist判定）で既に拾えるため、
+                    // バッジ側に別ジェスチャーを持たせる必要はない。
                     Text("\(idx + 2)")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(.white)
@@ -238,10 +270,7 @@ struct WaveformView: View {
                         .background(splitColor)
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                         .position(x: sx, y: size.height * 0.14)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            playerManager.seek(to: splitMs)
-                        }
+                        .allowsHitTesting(false)
                 }
             }
         }
@@ -261,6 +290,7 @@ struct WaveformView: View {
         if case .none = drag {
             // ドラッグ開始の瞬間の表示範囲で固定する（Android: isInteracting中は据え置き）
             lockedViewport = effectiveViewport(clip: clip)
+            playerManager.beginInteractiveSeek()
             let sl = value.startLocation.x
             let dLeft  = abs(sl - leftX)
             let dRight = abs(sl - rightX)
@@ -343,6 +373,7 @@ struct WaveformView: View {
 
     private func onDragEnd(_ value: DragGesture.Value, size: CGSize) {
         pendingBodyTask?.cancel(); pendingBodyTask = nil
+        defer { playerManager.endInteractiveSeek() }
 
         switch drag {
         case .seeking(let wasPlaying):
@@ -355,8 +386,29 @@ struct WaveformView: View {
                 playerManager.seek(to: seekMs)
             }
 
-        case .movingTrim(_, _, let wasPlaying):
+        case .splitMove:
+            // 分割マーカーの近くをドラッグせずタップしただけだと、grabOffset
+            // （掴んだ位置と分割マーカーの位置の差）がそのまま効いて、シーク先が
+            // 常に分割マーカーのすぐ近くへ引き戻されてしまう
+            // （「分割するとシークバーが分割の場所で固定される」不具合）。
+            // 実際に動かした形跡（moveSlopを超える移動）が無ければタップとして扱い、
+            // grabOffsetを無視して実際にタップした位置へそのままシークし直す。
+            if abs(value.location.x - value.startLocation.x) <= moveSlop, let clip = store.selectedClip {
+                let seekMs = max(clip.startMs, min(clip.endMs, msAt(x: value.location.x, w: size.width, clip: clip)))
+                playerManager.seek(to: seekMs)
+            }
+
+        case .movingTrim(_, let anchorX, let wasPlaying):
             if wasPlaying { playerManager.play() }
+            // schedulePendingBodyTimeout()が長押しタイムアウトで.movingTrimへ切り替えた後、
+            // 指を動かさないまま離すと「区間移動」としては何も起きず（onDragChangeが
+            // 一度も呼ばれないため）、実質タップだったのにシークが一切行われなかった
+            // （「分割位置はドラッグで動くのに、ただのタップだと再生バーが動かない」不具合）。
+            // 離した位置がanchorXからほぼ動いていなければ、タップとして扱いその場へ頭出しする。
+            if abs(value.location.x - anchorX) <= moveSlop, let clip = store.selectedClip {
+                let seekMs = max(clip.startMs, min(clip.endMs, msAt(x: value.location.x, w: size.width, clip: clip)))
+                playerManager.seek(to: seekMs)
+            }
 
         default:
             break
@@ -392,5 +444,26 @@ struct WaveformView: View {
         } catch {
             await MainActor.run { isLoading = false }
         }
+    }
+}
+
+/// SwiftUIのアニメーション機構（withAnimation/.animation(value:)）は通常View修飾子の
+/// パラメータを対象にするため、Canvas描画クロージャの中で直接使っている生の値は
+/// そのままでは補間されない。この透明ビューはanimatableDataとしてvalueを持たせることで
+/// SwiftUIのアニメーションエンジンに毎フレームの中間値を計算させ、onChangeで
+/// 呼び出し元へ橋渡しする（Canvasアニメーションの定番手法）。
+private struct HandleScaleAnimator: View, Animatable {
+    var value: CGFloat
+    let onChange: (CGFloat) -> Void
+
+    var animatableData: CGFloat {
+        get { value }
+        set { value = newValue }
+    }
+
+    var body: some View {
+        Color.clear
+            .onAppear { onChange(value) }
+            .onChange(of: value) { _, newValue in onChange(newValue) }
     }
 }

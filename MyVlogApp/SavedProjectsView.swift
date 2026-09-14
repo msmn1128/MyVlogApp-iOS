@@ -115,7 +115,11 @@ struct SavedProjectsView: View {
             set: { if !$0 { pendingDelete = nil } }
         )) {
             Button("削除", role: .destructive) {
-                if let id = pendingDelete?.id { store.deleteSavedProject(id: id) }
+                // 削除した行が瞬時に消えず、フェードアウトしながら後続の行が詰まるようにする
+                // （Android版のLazyColumn+animateItem()と同じ狙い）
+                withAnimation {
+                    if let id = pendingDelete?.id { store.deleteSavedProject(id: id) }
+                }
                 pendingDelete = nil
             }
             Button("キャンセル", role: .cancel) { pendingDelete = nil }

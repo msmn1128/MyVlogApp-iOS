@@ -26,6 +26,7 @@ struct ActionButtons: View {
                     .lineLimit(1)
                     .frame(maxWidth: .infinity)
                     .tonalPill(enabled: !exportManager.isExporting, colorScheme: colorScheme)
+                    .animation(.default, value: exportManager.isExporting)
             }
             .disabled(exportManager.isExporting)
 
@@ -35,49 +36,58 @@ struct ActionButtons: View {
                 Image(systemName: "doc.fill")
                     .font(.system(size: VlogLayout.toolbarIconSize * 0.82))
                     .tonalCircle(enabled: !exportManager.isExporting, colorScheme: colorScheme)
+                    .animation(.default, value: exportManager.isExporting)
             }
             .disabled(exportManager.isExporting)
             .accessibilityLabel("編集内容の保存と読み出し")
 
-            if exportManager.isExporting {
-                Button {
-                    exportManager.cancel()
-                } label: {
-                    Text("中止")
+            // 書き出し⇔中止の入れ替わりが瞬時に切り替わらず、フェードで橋渡しする
+            // （Android版ActionButtonsのAnimatedContentと同じ狙い）
+            Group {
+                if exportManager.isExporting {
+                    Button {
+                        exportManager.cancel()
+                    } label: {
+                        Text("中止")
+                            .lineLimit(1)
+                            .frame(maxWidth: .infinity)
+                            .outlinedPill(colorScheme: colorScheme)
+                    }
+                    .transition(.opacity)
+                } else {
+                    // Android版ExportButtonと同じく、タップ=タイトルカードあり、長押し=タイトルカードなし。
+                    // Buttonのタップとカスタムの長押しジェスチャーを同居させると発火順序が不安定になり
+                    // 長押し側が誤ってタイトルカード無しのまま素通りする事故があったため、Buttonではなく
+                    // onTapGesture/onLongPressGestureの組み合わせ（SwiftUI標準の曖昧さ解消）にしている。
+                    Text("書き出し")
                         .lineLimit(1)
                         .frame(maxWidth: .infinity)
-                        .outlinedPill(colorScheme: colorScheme)
+                        // Android版ExportButtonは動画を追加と違いprimary塗り（主役の操作として強調）
+                        .primaryPill(enabled: !store.clips.isEmpty, colorScheme: colorScheme)
+                        .animation(.default, value: store.clips.isEmpty)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            guard !store.clips.isEmpty else { return }
+                            postStartExport(includeTitle: true)
+                        }
+                        .onLongPressGesture(minimumDuration: 0.5) {
+                            guard !store.clips.isEmpty else { return }
+                            postStartExport(includeTitle: false)
+                        }
+                        // VoiceOver用のアクション（Android: ExportButtonのonClickLabel/onLongClickLabel相当）
+                        .accessibilityLabel("書き出し")
+                        .accessibilityAction {
+                            guard !store.clips.isEmpty else { return }
+                            postStartExport(includeTitle: true)
+                        }
+                        .accessibilityAction(named: "タイトルなしで書き出し") {
+                            guard !store.clips.isEmpty else { return }
+                            postStartExport(includeTitle: false)
+                        }
+                        .transition(.opacity)
                 }
-            } else {
-                // Android版ExportButtonと同じく、タップ=タイトルカードあり、長押し=タイトルカードなし。
-                // Buttonのタップとカスタムの長押しジェスチャーを同居させると発火順序が不安定になり
-                // 長押し側が誤ってタイトルカード無しのまま素通りする事故があったため、Buttonではなく
-                // onTapGesture/onLongPressGestureの組み合わせ（SwiftUI標準の曖昧さ解消）にしている。
-                Text("書き出し")
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity)
-                    // Android版ExportButtonは動画を追加と違いprimary塗り（主役の操作として強調）
-                    .primaryPill(enabled: !store.clips.isEmpty, colorScheme: colorScheme)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        guard !store.clips.isEmpty else { return }
-                        postStartExport(includeTitle: true)
-                    }
-                    .onLongPressGesture(minimumDuration: 0.5) {
-                        guard !store.clips.isEmpty else { return }
-                        postStartExport(includeTitle: false)
-                    }
-                    // VoiceOver用のアクション（Android: ExportButtonのonClickLabel/onLongClickLabel相当）
-                    .accessibilityLabel("書き出し")
-                    .accessibilityAction {
-                        guard !store.clips.isEmpty else { return }
-                        postStartExport(includeTitle: true)
-                    }
-                    .accessibilityAction(named: "タイトルなしで書き出し") {
-                        guard !store.clips.isEmpty else { return }
-                        postStartExport(includeTitle: false)
-                    }
             }
+            .animation(.default, value: exportManager.isExporting)
         }
     }
 

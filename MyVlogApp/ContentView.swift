@@ -48,8 +48,12 @@ struct ContentView: View {
                     ImportOverlayView(progress: importProgress, message: importMessage)
                 }
 
+                // 書き出しの進捗オーバーレイが瞬時に出入りせず、ふわっと現れる/消えるようにする
+                // （Android版ExportProgressのAnimatedVisibilityと同じ狙い）
                 if exportManager.isExporting {
-                    ExportOverlayView().environmentObject(exportManager)
+                    ExportOverlayView()
+                        .environmentObject(exportManager)
+                        .transition(.opacity)
                 }
 
                 if showSavedProjects {
@@ -63,6 +67,7 @@ struct ContentView: View {
                     ToastView(text: toast)
                 }
             }
+            .animation(.default, value: exportManager.isExporting)
         }
         // isLandscapeの判定は、ソフトキーボード表示中にGeometryReaderの高さが
         // 縮む影響を受けないよう、キーボード分のセーフエリアを無視した専用の
@@ -115,7 +120,16 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
             guard let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
             let screenHeight = UIScreen.main.bounds.height
-            isKeyboardVisible = frame.origin.y < screenHeight
+            let visible = frame.origin.y < screenHeight
+            guard visible != isKeyboardVisible else { return }
+            // システムのキーボードアニメーションと同じ時間で比率を動かす。
+            // 以前はここがwithAnimationで包まれておらず、比率がキーボードの
+            // スライドと無関係に一瞬で切り替わっていた（Android版で
+            // 「ひとこと」欄の枠が分割の瞬間に飛んで見えたのと同種の問題）。
+            let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+            withAnimation(.easeInOut(duration: duration)) {
+                isKeyboardVisible = visible
+            }
         }
         // Export trigger
         .onReceive(NotificationCenter.default.publisher(for: .startExport)) { note in
@@ -297,8 +311,12 @@ struct ExportOverlayView: View {
             VStack(spacing: 16) {
                 ProgressView(value: exportManager.progress)
                     .progressViewStyle(.linear).tint(AppColors.primary).frame(width: 260)
+                // 工程の切り替わり（メッセージ差し替え）もチラつかせず、文字だけフェードする
+                // （Android版ExportProgressのメッセージAnimatedContentと同じ狙い）
                 Text(exportManager.message)
                     .foregroundStyle(.white).font(.subheadline)
+                    .contentTransition(.opacity)
+                    .animation(.default, value: exportManager.message)
                 Button("中止") { exportManager.cancel() }
                     .foregroundStyle(.white)
                     .padding(.horizontal, 24).padding(.vertical, 8)

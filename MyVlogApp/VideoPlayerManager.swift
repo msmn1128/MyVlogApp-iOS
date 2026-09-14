@@ -23,12 +23,24 @@ class VideoPlayerManager: ObservableObject {
 
     private var shouldAutoPlayNext: Bool = false
 
+    /// 波形をドラッグしている間（トリム端／分割線／本体のどれでも）だけtrue。
+    ///
+    /// seek(to:)は非同期で、呼んだ直後のAVPlayerの内部時刻はまだ古い値のことがある。
+    /// 33ms間隔のperiodicObserverがちょうどその隙間に当たると、なぞっている指に
+    /// 追従して置いたはずのcurrentTimeMsがAVPlayer側の古い値で上書きされ、
+    /// シークのピンが指の動きと無関係に後ろへ戻って見える
+    /// （Android版で「ぴょんぴょん跳ねる」として直したのと同じ不具合）。
+    /// ドラッグ中はperiodicObserverによる上書きだけを止め、currentTimeMsは
+    /// 指の動きに合わせてseek(to:)が直接更新し続ける。
+    private(set) var isInteractiveSeeking: Bool = false
+
     init() {
         player.volume = 1.0
         player.isMuted = false
         let interval = CMTime(value: 1, timescale: 30)
         periodicObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             guard let self else { return }
+            guard !self.isInteractiveSeeking else { return }
             guard time.isNumeric && time.seconds.isFinite else { return }
             let ms = Int64(time.seconds * 1000)
             self.currentTimeMs = ms
@@ -106,8 +118,23 @@ class VideoPlayerManager: ObservableObject {
     func seek(to ms: Int64) {
         guard ms >= 0 else { return }
         let t = CMTime(value: ms, timescale: 1000)
-        player.seek(to: t, toleranceBefore: .zero, toleranceAfter: .zero)
+        // ドラッグ中はキーフレーム近傍への近似シークにして、毎フレームのseekによる
+        // カクつきを減らす（既定の.zero＝正確なシークだと1回ごとに正確な位置まで
+        // デコードし直すため重い）。指を離したらendInteractiveSeek()で正確に合わせ直す
+        let tolerance = isInteractiveSeeking ? CMTime(value: 1, timescale: 10) : .zero
+        player.seek(to: t, toleranceBefore: tolerance, toleranceAfter: tolerance)
         currentTimeMs = ms
+    }
+
+    /// 波形ドラッグの開始時に呼ぶ。シークを近似にし、周期観測での上書きを止める
+    func beginInteractiveSeek() {
+        isInteractiveSeeking = true
+    }
+
+    /// 波形ドラッグの終了時に呼ぶ。シークを正確な設定へ戻し、最後に一度だけ合わせ直す
+    func endInteractiveSeek() {
+        isInteractiveSeeking = false
+        seek(to: currentTimeMs)
     }
 
     func updateTrimBounds(startMs: Int64, endMs: Int64) {

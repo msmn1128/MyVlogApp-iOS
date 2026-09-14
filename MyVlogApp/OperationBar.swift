@@ -6,8 +6,6 @@ struct OperationBar: View {
     @EnvironmentObject var store:         VlogStore
     @EnvironmentObject var playerManager: VideoPlayerManager
 
-    @Binding var showDeleteAllAlert: Bool
-
     @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
@@ -16,24 +14,31 @@ struct OperationBar: View {
                 let enabled = store.selectedClip != nil
                 let trimPresetEnabled = enabled && (store.selectedClip?.durationMs ?? 0) > 0
 
+                // タップ＝選択中のクリップだけ削除、長押し＝すべて削除。
+                // どちらも押し間違えたら「もとに戻す」で復帰できるので、確認ダイアログは出さない
+                // （Android版と同じくtrash/trash.fillの2ボタン構成をやめて1つに統合した）
                 CompactIconButton(systemImage: "trash", contentDescription: "選択中のクリップを削除",
-                                   enabled: enabled, tint: AppColors.error(colorScheme)) {
-                    if let i = store.selectedIndex { store.deleteClip(at: i) }
-                }
-                CompactIconButton(systemImage: "trash.fill", contentDescription: "すべて削除",
-                                   enabled: !store.clips.isEmpty, tint: AppColors.error(colorScheme)) {
-                    showDeleteAllAlert = true
+                                   enabled: enabled, tint: AppColors.error(colorScheme),
+                                   onLongPress: { withAnimation { store.deleteAllClips() } },
+                                   longPressAccessibilityLabel: "すべて削除") {
+                    // 削除・並べ替えで前後のタイルが瞬間移動せず、新しい位置へ滑らかに
+                    // スライドするようにする（Android版のLazyRow+animateItem()と同じ狙い）
+                    withAnimation {
+                        if let i = store.selectedIndex { store.deleteClip(at: i) }
+                    }
                 }
 
                 divider
 
                 CompactIconButton(systemImage: "arrow.left", contentDescription: "ひとつ前へ移動",
                                    enabled: canMoveLeft) {
-                    playerManager.pause(); store.moveClipLeft()
+                    playerManager.pause()
+                    withAnimation { store.moveClipLeft() }
                 }
                 CompactIconButton(systemImage: "arrow.right", contentDescription: "ひとつ後ろへ移動",
                                    enabled: canMoveRight) {
-                    playerManager.pause(); store.moveClipRight()
+                    playerManager.pause()
+                    withAnimation { store.moveClipRight() }
                 }
 
                 divider
@@ -108,6 +113,7 @@ struct OperationBar: View {
             }
             .foregroundStyle(tint.opacity(enabled ? 1 : 0.38))
             .frame(width: VlogLayout.toolbarButtonSize, height: VlogLayout.toolbarButtonSize)
+            .animation(.default, value: enabled)
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
@@ -130,26 +136,63 @@ struct OperationBar: View {
     }
 }
 
-/// Android CompactIconButton相当：正円の当たり判定、背景なし、無効時は38%に減光
+/// Android CompactIconButton相当：正円の当たり判定、背景なし、無効時は38%に減光。
+/// onLongPressを渡すと長押しにも対応する（すべて削除など、確認ダイアログを出さない
+/// 操作向け）。長押しが効いた瞬間はアイコンを一度縮めてからバウンドさせて戻し、
+/// 実行された手応えを出す（Android版CompactIconButtonの弾む演出と同じ）
 private struct CompactIconButton: View {
     let systemImage: String
     let contentDescription: String
     var enabled: Bool = true
     var tint: Color? = nil
+    var onLongPress: (() -> Void)? = nil
+    var longPressAccessibilityLabel: String? = nil
     let action: () -> Void
 
     @Environment(\.colorScheme) var colorScheme
+    @State private var scale: CGFloat = 1
 
     var body: some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: VlogLayout.toolbarIconSize * 0.82, weight: .regular))
-                .foregroundStyle((tint ?? AppColors.onSurfaceVariant(colorScheme)).opacity(enabled ? 1 : 0.38))
-                .frame(width: VlogLayout.toolbarButtonSize, height: VlogLayout.toolbarButtonSize)
+        Image(systemName: systemImage)
+            .font(.system(size: VlogLayout.toolbarIconSize * 0.82, weight: .regular))
+            .foregroundStyle((tint ?? AppColors.onSurfaceVariant(colorScheme)).opacity(enabled ? 1 : 0.38))
+            // 有効/無効はundo/redoなど編集のたびに切り替わるため、色の濃淡を補間する
+            .animation(.default, value: enabled)
+            .scaleEffect(scale)
+            .frame(width: VlogLayout.toolbarButtonSize, height: VlogLayout.toolbarButtonSize)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                guard enabled else { return }
+                action()
+            }
+            .onLongPressGesture(minimumDuration: 0.5) {
+                guard enabled, let onLongPress else { return }
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                scale = 0.8
+                withAnimation(.interpolatingSpring(stiffness: 300, damping: 12)) {
+                    scale = 1
+                }
+                onLongPress()
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(contentDescription)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { action() }
+            .modifier(LongPressAccessibilityAction(label: longPressAccessibilityLabel, action: onLongPress))
+    }
+}
+
+/// アクセシビリティの長押し用アクションを、指定があるときだけ追加する
+private struct LongPressAccessibilityAction: ViewModifier {
+    let label: String?
+    let action: (() -> Void)?
+
+    func body(content: Content) -> some View {
+        if let label, let action {
+            content.accessibilityAction(named: label, action)
+        } else {
+            content
         }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
-        .accessibilityLabel(contentDescription)
     }
 }
 
@@ -164,14 +207,19 @@ private struct ToggleIconButton: View {
     @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
+        // 背景・アイコン色の切り替わりも即時ではなくクロスフェードさせる
+        // （Android版TimelineToggleButtonと同じ狙い）
         Button(action: action) {
             Image(systemName: systemImage)
                 .font(.system(size: VlogLayout.toolbarIconSize * 0.82, weight: .regular))
                 .foregroundStyle(iconColor.opacity(enabled ? 1 : 0.38))
+                .contentTransition(.symbolEffect(.replace))
                 .frame(width: VlogLayout.toolbarButtonSize, height: VlogLayout.toolbarButtonSize)
                 .background(
                     Circle().fill(checked && enabled ? AppColors.primaryContainer(colorScheme) : Color.clear)
                 )
+                .animation(.default, value: checked)
+                .animation(.default, value: enabled)
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
@@ -192,6 +240,7 @@ private struct TrimPresetButton: View {
     @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
+        // CompactIconButtonと同じく、有効/無効の切り替わりを色の濃淡で補間する
         let tint = AppColors.onSurfaceVariant(colorScheme).opacity(enabled ? 1 : 0.38)
         Button(action: action) {
             Text(label)
@@ -202,6 +251,7 @@ private struct TrimPresetButton: View {
                 .overlay(
                     Capsule().stroke(tint, lineWidth: 1)
                 )
+                .animation(.default, value: enabled)
         }
         .buttonStyle(.plain)
         .disabled(!enabled)

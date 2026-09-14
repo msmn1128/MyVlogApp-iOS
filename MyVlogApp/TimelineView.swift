@@ -8,8 +8,6 @@ struct TimelineView: View {
     @EnvironmentObject var playerManager: VideoPlayerManager
     @Environment(\.colorScheme) var colorScheme
 
-    @State private var showDeleteAllAlert: Bool = false
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 4) {
@@ -17,20 +15,11 @@ struct TimelineView: View {
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
 
-                OperationBar(showDeleteAllAlert: $showDeleteAllAlert)
+                OperationBar()
                     .environmentObject(store)
                     .environmentObject(playerManager)
 
-                if store.clips.isEmpty {
-                    HStack {
-                        Spacer()
-                        Text("動画を追加するとここに並びます")
-                            .font(.system(size: 12))
-                            .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
-                        Spacer()
-                    }
-                    .padding(.vertical, 24)
-                } else {
+                if !store.clips.isEmpty {
                     clipRow
 
                     WaveformView()
@@ -45,12 +34,6 @@ struct TimelineView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AppColors.card(colorScheme))
         .clipShape(RoundedRectangle(cornerRadius: 12))
-        .alert("すべて削除しますか", isPresented: $showDeleteAllAlert) {
-            Button("すべて削除", role: .destructive) { store.deleteAllClips() }
-            Button("キャンセル", role: .cancel) {}
-        } message: {
-            Text("タイムラインの動画をすべて外します。「もとに戻す」で元に戻せます。")
-        }
     }
 
     private var clipRow: some View {
@@ -168,6 +151,10 @@ private struct ClipTile: View {
                     lineWidth: isSelected ? 2.5 : 1
                 )
         )
+        // 選択状態の切り替わりで枠線が一瞬で変わらず、じわっと変化するようにする
+        // （Android版ClipTileのanimateColorAsStateと同じ狙い）
+        .animation(.default, value: isSelected)
+        .transition(.opacity)
         .onAppear { loadThumbnail() }
     }
 
