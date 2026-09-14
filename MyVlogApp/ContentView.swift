@@ -1,7 +1,5 @@
 
 
-
-
 import SwiftUI
 import PhotosUI
 import UniformTypeIdentifiers
@@ -49,8 +47,6 @@ struct ContentView: View {
 
     // キーボード表示中はひとこと欄を広げる（Android: VlogAppScreen imeVisible分岐）
     @State private var isKeyboardVisible: Bool = false
-    // 縦画面で「ひとこと」を編集中は、プレビュー・タイムラインを隠して入力欄だけを全画面表示する
-    @State private var isEditingHitokoto: Bool = false
 
     @Environment(\.colorScheme) var colorScheme
 
@@ -106,12 +102,19 @@ struct ContentView: View {
         .onChange(of: store.timelineMuted) {
             playerManager.applyMuteState(for: store.selectedClip)
         }
-        // キーボード表示中はタイムライン:ひとことの比率をAndroid版のimeVisible分岐に合わせて変える
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
-            isKeyboardVisible = true
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-            isKeyboardVisible = false
+        // キーボード表示中はタイムライン:ひとことの比率をAndroid版のimeVisible分岐に合わせて変える。
+        //
+        // 以前は縦画面で「ひとこと」にフォーカス中はプレビュー・タイムラインを丸ごと隠して
+        // 入力欄だけを全画面表示する専用モード（isEditingHitokoto）を持っていたが、
+        // これを@FocusStateの変化から間接的に（コールバック経由で）更新する設計は、
+        // 画面回転などのタイミングでフォーカスの実状態とずれて固まることがあり、
+        // 「キーボードを閉じてもひとこと欄だけが全画面に残る」という不具合の原因になっていた。
+        // 縦画面でも常に1カラム（プレビュー・タイムライン・ひとこと欄すべて表示）を保つことで、
+        // この種のズレが起きようがない構造にする。
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
+            guard let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+            let screenHeight = UIScreen.main.bounds.height
+            isKeyboardVisible = frame.origin.y < screenHeight
         }
         // Export trigger
         .onReceive(NotificationCenter.default.publisher(for: .startExport)) { note in
@@ -137,30 +140,27 @@ struct ContentView: View {
     // MARK: - Layout builders
 
     private func portraitLayout(size: CGSize) -> some View {
-        // TextInputView自体は常に同じ呼び出し箇所を保つ（if/elseで別インスタンスに切り替えると
-        // NativeTextViewのUITextViewが作り直されてfirst responderが外れ、キーボードが
-        // 閉じてしまう）。編集中は周りの要素だけをif文で隠す。
+        // 縦画面は常に1カラム（プレビュー・タイムライン・ひとこと欄すべて表示）を保つ。
+        // キーボード表示中はAndroid版のimeVisible分岐と同じ比率でタイムライン:ひとことの
+        // 高さ配分だけを変える（セクションの着脱はしない）。
         VStack(spacing: 10) {
-            if !isEditingHitokoto {
-                PreviewView()
-                    .environmentObject(store)
-                    .environmentObject(playerManager)
-                    .aspectRatio(16 / 9, contentMode: .fit)
-                    .frame(width: size.width)
-
-                ActionButtons(
-                    showSavedProjects: $showSavedProjects,
-                    showPhotoPicker:   $showPhotoPicker,
-                    showFilePicker:    $showFilePicker
-                )
+            PreviewView()
                 .environmentObject(store)
-                .environmentObject(exportManager)
-                .padding(.horizontal, 12)
-            }
+                .environmentObject(playerManager)
+                .aspectRatio(16 / 9, contentMode: .fit)
+                .frame(width: size.width)
+
+            ActionButtons(
+                showSavedProjects: $showSavedProjects,
+                showPhotoPicker:   $showPhotoPicker,
+                showFilePicker:    $showFilePicker
+            )
+            .environmentObject(store)
+            .environmentObject(exportManager)
+            .padding(.horizontal, 12)
 
             // Android版の timelineWeight(0.40) : editorWeight(0.18) と同じ比率で
-            // 残り高さを配分する（キーボード非表示時の値）。編集中はタイムラインを隠し、
-            // 入力欄だけで残り全高を使う。
+            // 残り高さを配分する（キーボード非表示時の値）。
             GeometryReader { geo in
                 let spacing: CGFloat = 10
                 let available = max(0, geo.size.height - spacing)
@@ -168,17 +168,15 @@ struct ContentView: View {
                 let editorHeight   = available * editorHeightRatio
 
                 VStack(spacing: spacing) {
-                    if !isEditingHitokoto {
-                        TimelineView()
-                            .environmentObject(store)
-                            .environmentObject(playerManager)
-                            .frame(height: timelineHeight)
-                    }
-
-                    TextInputView(onEditingChange: { isEditingHitokoto = $0 })
+                    TimelineView()
                         .environmentObject(store)
                         .environmentObject(playerManager)
-                        .frame(height: isEditingHitokoto ? geo.size.height : editorHeight)
+                        .frame(height: timelineHeight)
+
+                    TextInputView()
+                        .environmentObject(store)
+                        .environmentObject(playerManager)
+                        .frame(height: editorHeight)
                 }
                 .padding(.horizontal, 12)
             }
