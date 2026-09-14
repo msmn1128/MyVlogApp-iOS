@@ -442,8 +442,11 @@ class ExportManager: ObservableObject {
             ?? UIFont.boldSystemFont(ofSize: VlogLayout.hitokoroFontSize)
         let lineH = VlogLayout.hitokoroFontSize + VlogLayout.hitokoroLineGap
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        let totalH = CGFloat(lines.count) * lineH - VlogLayout.hitokoroLineGap
-        let topY   = canvas.height * 0.5 - totalH / 2
+        // PreviewViewのhitokoroOverlayと同じ計算をVlogLayout.hitokotoBlockTopに共通化している
+        let topY  = VlogLayout.hitokotoBlockTop(
+            lineCount: lines.count, canvasHeight: canvas.height,
+            fontSize: VlogLayout.hitokoroFontSize, lineGap: VlogLayout.hitokoroLineGap
+        )
 
         let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: UIColor.white]
         for (idx, line) in lines.enumerated() where !line.isEmpty {

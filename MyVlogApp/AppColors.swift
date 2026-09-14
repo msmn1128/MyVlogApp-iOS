@@ -93,4 +93,15 @@ enum VlogLayout {
     /// Android: TOOLBAR_BUTTON_SIZE / TOOLBAR_ICON_SIZE
     static let toolbarButtonSize: CGFloat = 48
     static let toolbarIconSize:   CGFloat = 20
+
+    /// 「ひとこと」複数行ブロックの先頭行の上端Y（キャンバス上下中央に配置）。
+    /// PreviewView（SwiftUI描画）とExportManager（CGContext描画）の両方で使う、
+    /// 数値としては完全に同一の計算（過去にここがズレて「プレビューと書き出しの
+    /// 黒帯基準ズレ」という不具合になったことがあるため、1箇所にまとめている）。
+    static func hitokotoBlockTop(lineCount: Int, canvasHeight: CGFloat, fontSize: CGFloat, lineGap: CGFloat) -> CGFloat {
+        guard lineCount > 0 else { return canvasHeight * 0.5 }
+        let lineHeight = fontSize + lineGap
+        let totalHeight = lineHeight * CGFloat(lineCount) - lineGap
+        return canvasHeight * 0.5 - totalHeight / 2
+    }
 }

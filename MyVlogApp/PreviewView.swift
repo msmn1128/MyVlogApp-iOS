@@ -62,9 +62,11 @@ struct PreviewView: View {
         let fontSize   = VlogLayout.hitokoroFontSize * scale
         let lineGap    = VlogLayout.hitokoroLineGap * scale
         let lineHeight = fontSize + lineGap
-        let totalH     = lineHeight * CGFloat(lines.count) - lineGap
-        // 上下左右中央: Y は canvas 中心から均等に配置
-        let startY     = canvas.height * 0.5 - totalH / 2
+        // 上下左右中央: Y は canvas 中心から均等に配置（ExportManagerのdrawHitokotoと
+        // 同じ計算をVlogLayout.hitokotoBlockTopに共通化している）
+        let startY     = VlogLayout.hitokotoBlockTop(
+            lineCount: lines.count, canvasHeight: canvas.height, fontSize: fontSize, lineGap: lineGap
+        )
 
         return ZStack {
             ForEach(Array(lines.enumerated()), id: \.offset) { idx, line in
