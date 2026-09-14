@@ -361,15 +361,7 @@ class VlogStore: ObservableObject {
     func saveCurrentProject(name: String) -> Bool {
         guard savedProjects.count < 20 else { return false }
         let now = Int64(Date().timeIntervalSince1970 * 1000)
-        let project = SavedProject(
-            id:        now,
-            name:      name,
-            savedAt:   now,
-            clipCount: clips.count,
-            totalMs:   clips.reduce(0) { $0 + $1.trimmedDurationMs },
-            clips:     clips
-        )
-        savedProjects.insert(project, at: 0)
+        savedProjects.insert(makeSavedProject(id: now, name: name, savedAt: now), at: 0)
         persistSavedProjects()
         return true
     }
@@ -385,15 +377,21 @@ class VlogStore: ObservableObject {
     func overwriteProject(id: Int64, name: String) {
         guard let idx = savedProjects.firstIndex(where: { $0.id == id }) else { return }
         let now = Int64(Date().timeIntervalSince1970 * 1000)
-        savedProjects[idx] = SavedProject(
-            id: id,
-            name: name,
-            savedAt: now,
-            clipCount: clips.count,
-            totalMs: clips.reduce(0) { $0 + $1.trimmedDurationMs },
-            clips: clips
-        )
+        savedProjects[idx] = makeSavedProject(id: id, name: name, savedAt: now)
         persistSavedProjects()
+    }
+
+    /// 現在編集中のclipsから、指定id/name/savedAtでSavedProjectを組み立てる
+    /// （saveCurrentProject/overwriteProjectで共通の構築ロジック）
+    private func makeSavedProject(id: Int64, name: String, savedAt: Int64) -> SavedProject {
+        SavedProject(
+            id:        id,
+            name:      name,
+            savedAt:   savedAt,
+            clipCount: clips.count,
+            totalMs:   clips.reduce(0) { $0 + $1.trimmedDurationMs },
+            clips:     clips
+        )
     }
 
     func deleteSavedProject(id: Int64) {

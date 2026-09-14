@@ -193,8 +193,6 @@ private struct ClipTile: View {
     }
 
     private func durationLabel(_ ms: Int64) -> String {
-        let s = ms / 1000
-        let m = s / 60
-        return String(format: "%d:%02d", m, s % 60)
+        Formatters.durationLabel(ms: ms)
     }
 }

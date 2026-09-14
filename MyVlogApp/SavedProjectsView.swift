@@ -126,17 +126,7 @@ struct SavedProjectsView: View {
 
     /// 既定の保存名 "M/d"。同名があれば "M/d (1)" のように連番を付ける（Android: defaultSaveName）
     private func nextDefaultName() -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "M/d"
-        let base = formatter.string(from: Date())
-        let taken = Set(store.savedProjects.map { $0.name })
-        var candidate = base
-        var index = 1
-        while taken.contains(candidate) {
-            candidate = "\(base) (\(index))"
-            index += 1
-        }
-        return candidate
+        Formatters.defaultSaveName(existingNames: Set(store.savedProjects.map { $0.name }))
     }
 }
 
@@ -176,14 +166,11 @@ private struct SavedProjectRow: View {
     }
 
     private var savedAtLabel: String {
-        let date = Date(timeIntervalSince1970: Double(project.savedAt) / 1000)
-        let f = DateFormatter(); f.dateFormat = "M/d HH:mm"
-        return f.string(from: date)
+        Formatters.savedAtLabel(msSinceEpoch: project.savedAt)
     }
 
     private var durationLabel: String {
-        let s = project.totalMs / 1000
-        return String(format: "%d:%02d", s / 60, s % 60)
+        Formatters.durationLabel(ms: project.totalMs)
     }
 }
 
