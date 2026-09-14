@@ -79,11 +79,28 @@ struct ContentView: View {
                     ToastView(text: toast)
                 }
             }
-            .onChange(of: sz) { _, newSz in
-                isLandscape = newSz.width > newSz.height
-            }
-            .onAppear { isLandscape = sz.width > sz.height }
         }
+        // isLandscapeの判定は、ソフトキーボード表示中にGeometryReaderの高さが
+        // 縮む影響を受けないよう、キーボード分のセーフエリアを無視した専用の
+        // GeometryReaderで測る。上のsz（bodyの主レイアウトに使う値）はキーボード
+        // 表示中も普通に縮めておき、既存のキーボード用の高さ比率調整を維持する。
+        //
+        // 以前はキーボード表示通知（isKeyboardVisible）が来るまでの短い間に
+        // sizeの変化がisLandscapeを誤って書き換えてしまうことがあった
+        // （iPadの縦画面でキーボードを開くと2カラム表示になる不具合）。
+        // 通知とレイアウト更新の順序はSwiftUI側の保証がなく、フラグでの
+        // ガードでは順序次第で防ぎきれないため、そもそもキーボードの影響を
+        // 受けないサイズで判定する方式にした。
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { isLandscape = geo.size.width > geo.size.height }
+                    .onChange(of: geo.size) { _, newSize in
+                        isLandscape = newSize.width > newSize.height
+                    }
+            }
+            .ignoresSafeArea(.keyboard, edges: .bottom)
+        )
         // Load clip when selection changes
         .onChange(of: store.selectedIndex) {
             if let clip = store.selectedClip {

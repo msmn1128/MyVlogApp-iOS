@@ -68,21 +68,21 @@ class ExportManager: ObservableObject {
     private func runExport(clips: [VlogClip], timelineMuted: Bool, includeTitle: Bool) async {
         var tempFiles: [URL] = []
         do {
-            // タイトルカードは常に作る（タイトル無し書き出しの先頭クリップだけ文字が
-            // 数フレーム欠ける不具合の回避策。タイトル役の映像を経由すると解消するため、
-            // 生成はそのまま行い、不要な場合は結合後にその区間だけ切り落とす）。
-            update("タイトルを作成中...")
-            var titleURL = try await createTitleCard(clips: clips)
-            tempFiles.append(titleURL)
-            if !timelineMuted {
-                let withSfx = try await addTitleSfx(to: titleURL)
-                tempFiles.append(withSfx)
-                titleURL = withSfx
+            var clipURLs: [URL] = []
+            if includeTitle {
+                update("タイトルを作成中...")
+                var titleURL = try await createTitleCard(clips: clips)
+                tempFiles.append(titleURL)
+                if !timelineMuted {
+                    let withSfx = try await addTitleSfx(to: titleURL)
+                    tempFiles.append(withSfx)
+                    titleURL = withSfx
+                }
+                clipURLs.append(titleURL)
+                guard !Task.isCancelled else { throw CancellationError() }
             }
-            guard !Task.isCancelled else { throw CancellationError() }
 
-            var clipURLs: [URL] = [titleURL]
-            let progressDenominator = Double(clips.count + 2)
+            let progressDenominator = Double(clips.count + (includeTitle ? 2 : 1))
             for (i, clip) in clips.enumerated() {
                 update("クリップ \(i + 1)/\(clips.count) を処理中...")
                 let url = try await processClip(clip, silent: clip.isSilentInExport(timelineMuted: timelineMuted))
@@ -93,16 +93,9 @@ class ExportManager: ObservableObject {
             }
 
             update("結合中...")
-            var merged = try await concatenate(urls: clipURLs)
+            let merged = try await concatenate(urls: clipURLs)
             tempFiles.append(merged)
             progress = 0.9
-
-            if !includeTitle {
-                update("タイトルを取り除いています...")
-                let stripped = try await stripTitleSegment(from: merged)
-                tempFiles.append(stripped)
-                merged = stripped
-            }
 
             update("保存中...")
             try await saveToPhotoLibrary(url: merged)
@@ -538,24 +531,6 @@ class ExportManager: ObservableObject {
             throw ExportError.sessionCreationFailed
         }
         session.shouldOptimizeForNetworkUse = true
-        try await session.export(to: outURL, as: .mp4)
-        return outURL
-    }
-
-    /// 結合済み動画の先頭（タイトルカードぶん）を切り落とす。タイトルカードは常に
-    /// 生成した上でここで除くことで、タイトル無し書き出しの先頭クリップだけ文字が
-    /// 数フレーム欠けていた不具合を避ける。
-    private func stripTitleSegment(from url: URL) async throws -> URL {
-        let asset = AVURLAsset(url: url)
-        let totalDuration = try await asset.load(.duration)
-        let titleDuration = CMTime(seconds: VlogLayout.titleCardDuration, preferredTimescale: 600)
-        guard totalDuration > titleDuration else { return url }
-
-        let outURL = tempURL("no_title")
-        guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else {
-            return url
-        }
-        session.timeRange = CMTimeRange(start: titleDuration, duration: totalDuration - titleDuration)
         try await session.export(to: outURL, as: .mp4)
         return outURL
     }
