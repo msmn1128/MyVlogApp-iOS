@@ -6,9 +6,6 @@ struct TextInputView: View {
     @EnvironmentObject var playerManager: VideoPlayerManager
     @Environment(\.colorScheme) var colorScheme
 
-    /// 縦画面で入力中に他のセクションを隠す全画面モードへ切り替えるための通知先（任意）
-    var onEditingChange: ((Bool) -> Void)? = nil
-
     @State private var text:         String = ""
     @State private var segmentIndex: Int    = 0
     @State private var isEditing:    Bool   = false
@@ -35,18 +32,18 @@ struct TextInputView: View {
                 }
                 .padding(.horizontal, 4)
 
-                // Native UITextView - 実機で100%確実にキーボードが開く
+                // EagerFirstResponderTextView を使うことで、SwiftUIのジェスチャー配送と
+                // UIKitのfirst responder化のタイムラグによる「1回目タップでキーボードが
+                // 開かない」問題を根本的に解消する。
                 NativeTextView(
                     text: $text,
                     placeholder: store.selectedClip == nil ? "動画を選択してください" : "テロップを入力...",
                     onBeginEditing: {
                         isEditing = true
                         playerManager.pause()
-                        onEditingChange?(true)
                     },
                     onEndEditing: {
                         isEditing = false
-                        onEditingChange?(false)
                     },
                     onChange: { newText in
                         store.updateText(newText, segmentIndex: segmentIndex)
@@ -139,12 +136,10 @@ struct NativeTextView: UIViewRepresentable {
         }
     }
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
-    }
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    func makeUIView(context: Context) -> UITextView {
-        let tv = UITextView()
+    func makeUIView(context: Context) -> EagerFirstResponderTextView {
+        let tv = EagerFirstResponderTextView()
         tv.delegate = context.coordinator
         tv.font = UIFont.systemFont(ofSize: 15)
         tv.backgroundColor = .clear
@@ -153,16 +148,15 @@ struct NativeTextView: UIViewRepresentable {
         tv.isScrollEnabled = true
         tv.textContainerInset = UIEdgeInsets(top: 8, left: 6, bottom: 8, right: 6)
 
-        // Toolbar with Done button
         let toolbar = UIToolbar(frame: CGRect(x: 0, y: 0, width: UIScreen.main.bounds.width, height: 44))
         let flex = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
-        let done = UIBarButtonItem(title: "閉じる", style: .done, target: tv, action: #selector(UIResponder.resignFirstResponder))
+        let done = UIBarButtonItem(title: "閉じる", style: .done, target: tv,
+                                   action: #selector(UIResponder.resignFirstResponder))
         done.tintColor = UIColor(AppColors.primary)
         toolbar.items = [flex, done]
         toolbar.sizeToFit()
         tv.inputAccessoryView = toolbar
 
-        // Placeholder label
         let pl = UILabel()
         pl.text = placeholder
         pl.font = UIFont.systemFont(ofSize: 15)
@@ -181,12 +175,28 @@ struct NativeTextView: UIViewRepresentable {
         return tv
     }
 
-    func updateUIView(_ uiView: UITextView, context: Context) {
+    func updateUIView(_ uiView: EagerFirstResponderTextView, context: Context) {
         context.coordinator.parent = self
         if uiView.text != text {
             uiView.text = text
             context.coordinator.placeholderLabel?.isHidden = !text.isEmpty
         }
         context.coordinator.placeholderLabel?.text = placeholder
+    }
+}
+
+// MARK: - EagerFirstResponderTextView
+
+/// touchesBeganでeagerly becomeFirstResponder()を呼ぶUITextViewサブクラス。
+/// SwiftUIのジェスチャー認識とUIKitのfirst responder化の間にあるタイムラグが
+/// 実機（特にiPad）で「1回目タップでキーボードが開かない」症状を引き起こすが、
+/// touchesBegan時点では既にhitTestがこのビューを選択しているため、ここで
+/// becomeFirstResponder()を呼べば確実かつ即座にキーボードが表示される。
+final class EagerFirstResponderTextView: UITextView {
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesBegan(touches, with: event)
+        if !isFirstResponder {
+            _ = becomeFirstResponder()
+        }
     }
 }

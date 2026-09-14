@@ -280,15 +280,19 @@ class ExportManager: ObservableObject {
 
     // MARK: - Per-clip processing
 
-    private func processClip(_ clip: VlogClip, silent: Bool) async throws -> URL {
-        let asset   = try await AssetLoader.shared.load(clip: clip)
-        let outURL  = tempURL("clip_\(clip.id.uuidString)")
-        let canvas  = CGSize(width: 1920, height: 1080)
+    // AVVideoCompositionCoreAnimationToolはCALayerの時刻管理がAVFoundation側の内部実装に
+    // 依存していて、書き出しのたびに文字が数フレーム（時にはもっと）欠けることがある既知の
+    // 不安定なAPI。何度か個別の緩和策を試したが根本解決しなかったため、CoreAnimationToolを
+    // 完全に使わない方式へ作り直した：スケール・パディングの変換だけはAVFoundationの通常の
+    // videoComposition（CoreAnimationToolなし）に任せ、そこから出てくる「すでにキャンバス
+    // サイズへ変換済みのフレーム」に対して、こちらでフレームごとに毎回テキストを描き込む。
+    // タイトルカード（renderTitleFrame）と同じ「自前でCGContextに描く」方式なので、
+    // タイミングの不確実性が原理的に存在しない。
 
-        // Build composition
-        let composition  = AVMutableComposition()
-        let videoTracks  = try await asset.load(.tracks).filter { $0.mediaType == .video }
-        let audioTracks  = try await asset.load(.tracks).filter { $0.mediaType == .audio }
+    private func processClip(_ clip: VlogClip, silent: Bool) async throws -> URL {
+        let asset  = try await AssetLoader.shared.load(clip: clip)
+        let canvas = CGSize(width: 1920, height: 1080)
+        let videoTracks = try await asset.load(.tracks).filter { $0.mediaType == .video }
         guard let srcVideo = videoTracks.first else { throw ExportError.noVideoTrack }
 
         let trimRange = CMTimeRange(
@@ -296,236 +300,215 @@ class ExportManager: ObservableObject {
             duration: CMTime(value: clip.trimmedDurationMs, timescale: 1000)
         )
 
-        let compVideo = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)!
-        try compVideo.insertTimeRange(trimRange, of: srcVideo, at: .zero)
-
-        var compAudio: AVMutableCompositionTrack?
-        if let srcAudio = audioTracks.first {
-            let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)!
-            try? track.insertTimeRange(trimRange, of: srcAudio, at: .zero)
-            compAudio = track
-        }
-
-        // Video composition for scaling + text overlay
-        let videoComp = try await buildVideoComposition(
-            composition:    composition,
-            sourceTrack:    srcVideo,
-            clip:           clip,
-            canvas:         canvas
+        let videoOnlyURL = try await renderClipVideoWithText(
+            clip: clip, asset: asset, sourceTrack: srcVideo, canvas: canvas, trimRange: trimRange
         )
+        defer { try? FileManager.default.removeItem(at: videoOnlyURL) }
 
-        // Export
-        guard let session = AVAssetExportSession(asset: composition, presetName: AVAssetExportPreset1920x1080) else {
-            throw ExportError.sessionCreationFailed
+        // 音声はテキスト焼き込みと無関係で、通常のAVFoundation合成で安定して動く部分なので
+        // そのまま使う（無音にしたいときは音声トラック自体を持たせない）。
+        return try await mergeClipAudio(videoOnlyURL: videoOnlyURL, sourceAsset: asset, trimRange: trimRange, silent: silent)
+    }
+
+    /// スケール・パディング変換ずみの映像フレームを1枚ずつ取り出し、そこへテキストを
+    /// 描き込みながら書き出す。変換自体はAVFoundationの通常のvideoComposition
+    /// （CoreAnimationToolなし）に任せているので、変換ロジックは既存のものを流用できる。
+    private func renderClipVideoWithText(
+        clip: VlogClip, asset: AVAsset, sourceTrack: AVAssetTrack, canvas: CGSize, trimRange: CMTimeRange
+    ) async throws -> URL {
+        let outURL = tempURL("clipvideo_\(clip.id.uuidString)")
+        let assetDuration = try await asset.load(.duration)
+        let videoComp = try await buildPlainVideoComposition(sourceTrack: sourceTrack, canvas: canvas, coverage: assetDuration)
+
+        let reader = try AVAssetReader(asset: asset)
+        reader.timeRange = trimRange
+        let readerOutput = AVAssetReaderVideoCompositionOutput(
+            videoTracks: [sourceTrack],
+            videoSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+        )
+        readerOutput.videoComposition = videoComp
+        guard reader.canAdd(readerOutput) else { throw ExportError.sessionCreationFailed }
+        reader.add(readerOutput)
+
+        let writer = try AVAssetWriter(outputURL: outURL, fileType: .mov)
+        let writerInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey:  AVVideoCodecType.h264,
+            AVVideoWidthKey:  Int(canvas.width),
+            AVVideoHeightKey: Int(canvas.height)
+        ])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: writerInput,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String:  Int(canvas.width),
+                kCVPixelBufferHeightKey as String: Int(canvas.height)
+            ]
+        )
+        writer.add(writerInput)
+
+        guard reader.startReading() else { throw reader.error ?? ExportError.sessionCreationFailed }
+        writer.startWriting()
+        writer.startSession(atSourceTime: .zero)
+
+        let spans    = clip.visibleTextSpans()   // trimStart起点の相対区間
+        let timeText = clip.timeText
+
+        while let sampleBuffer = readerOutput.copyNextSampleBuffer() {
+            try Task.checkCancellation()
+            guard let srcBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { continue }
+
+            // readerのtimeRangeで絞っても、返ってくるサンプルの時刻は元動画の絶対時刻の
+            // ままなので、trimRange.startからの相対時刻に引き直してから書き出す
+            let absolutePts  = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+            let relativeTime = CMTimeSubtract(absolutePts, trimRange.start)
+            let relativeMs   = Int64(max(0, relativeTime.seconds) * 1000)
+
+            while !writerInput.isReadyForMoreMediaData { await Task.yield() }
+
+            drawCaptionOverlay(onto: srcBuffer, canvas: canvas, positionMs: relativeMs, spans: spans, timeText: timeText)
+            adaptor.append(srcBuffer, withPresentationTime: relativeTime)
         }
-        session.videoComposition   = videoComp
-        session.shouldOptimizeForNetworkUse = true
 
-        // クリップ個別またはタイムライン全体のミュート（Android: isSilentInExport）を音量0で反映
-        if silent, let compAudio {
-            let params = AVMutableAudioMixInputParameters(track: compAudio)
-            params.setVolume(0, at: .zero)
-            let mix = AVMutableAudioMix()
-            mix.inputParameters = [params]
-            session.audioMix = mix
-        }
-
-        try await session.export(to: outURL, as: .mov)
+        writerInput.markAsFinished()
+        await writer.finishWriting()
+        if let err = writer.error { throw err }
         return outURL
     }
 
-    private func buildVideoComposition(
-        composition:  AVMutableComposition,
-        sourceTrack:  AVAssetTrack,
-        clip:         VlogClip,
-        canvas:       CGSize
+    /// スケール・パディングだけを行う素のvideoComposition（CoreAnimationToolは付けない）。
+    /// [coverage]はreaderのtimeRangeでの絞り込みに関係なく、元動画の絶対時刻でinstructionが
+    /// 有効になる範囲。変換自体は時間に依存しないので、単に元動画全体をカバーしておけばよい。
+    private func buildPlainVideoComposition(
+        sourceTrack: AVAssetTrack, canvas: CGSize, coverage: CMTime
     ) async throws -> AVMutableVideoComposition {
+        let naturalSize         = try await sourceTrack.load(.naturalSize)
+        let preferredTransform  = try await sourceTrack.load(.preferredTransform)
+        let displayRect = CGRect(origin: .zero, size: naturalSize).applying(preferredTransform)
+        let displayW = max(1, abs(displayRect.width))
+        let displayH = max(1, abs(displayRect.height))
 
-        let naturalSize   = try await sourceTrack.load(.naturalSize)
-        let preferredTransform = try await sourceTrack.load(.preferredTransform)
-        let displayRect   = CGRect(origin: .zero, size: naturalSize).applying(preferredTransform)
-        let displayW      = max(1, abs(displayRect.width))
-        let displayH      = max(1, abs(displayRect.height))
-
-        let scale  = min(canvas.width / displayW, canvas.height / displayH)
+        let scale   = min(canvas.width / displayW, canvas.height / displayH)
         let scaledW = displayW * scale
         let scaledH = displayH * scale
-        let tx      = (canvas.width  - scaledW) / 2
-        let ty      = (canvas.height - scaledH) / 2
+        let tx = (canvas.width  - scaledW) / 2
+        let ty = (canvas.height - scaledH) / 2
 
-        // Combined transform: rotate → normalize → scale → center
         let normalize = CGAffineTransform(translationX: -displayRect.minX, y: -displayRect.minY)
         let scaleT    = CGAffineTransform(scaleX: scale, y: scale)
         let centerT   = CGAffineTransform(translationX: tx, y: ty)
         let finalT    = preferredTransform.concatenating(normalize).concatenating(scaleT).concatenating(centerT)
 
-        let compositionTracks = composition.tracks(withMediaType: .video)
-        guard let compVideoTrack = compositionTracks.first else { throw ExportError.noVideoTrack }
-
-        let instruction     = AVMutableVideoCompositionInstruction()
-        let compDuration    = composition.duration
-        instruction.timeRange = CMTimeRange(start: .zero, duration: compDuration)
-
-        let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: compVideoTrack)
+        let instruction = AVMutableVideoCompositionInstruction()
+        instruction.timeRange = CMTimeRange(start: .zero, duration: coverage)
+        let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: sourceTrack)
         layerInstruction.setTransform(finalT, at: .zero)
         instruction.layerInstructions = [layerInstruction]
 
-        let videoComp             = AVMutableVideoComposition()
-        videoComp.renderSize      = canvas
-        videoComp.frameDuration   = CMTime(value: 1, timescale: 30)
-        videoComp.instructions    = [instruction]
-
-        // Text overlay via Core Animation
-        let totalSec = compDuration.seconds
-        let animLayer = buildTextLayer(clip: clip, canvas: canvas, totalSeconds: totalSec)
-        if let animLayer {
-            let videoLayer = CALayer()
-            videoLayer.frame = CGRect(origin: .zero, size: canvas)
-            // レイヤーツリー自体のbeginTimeをゼロ基準にしておかないと、素のCALayerは生成された
-            // 実時刻を基準に扱われ、動画のローカル時間とズレる（短いクリップほど、この見えない
-            // オフセットが尺全体を食いつぶして文字が丸ごと出なくなる）。
-            animLayer.beginTime  = AVCoreAnimationBeginTimeAtZero
-            videoLayer.beginTime = AVCoreAnimationBeginTimeAtZero
-            animLayer.insertSublayer(videoLayer, at: 0)
-            videoComp.animationTool = AVVideoCompositionCoreAnimationTool(
-                postProcessingAsVideoLayer: videoLayer,
-                in: animLayer
-            )
-        }
-
+        let videoComp = AVMutableVideoComposition()
+        videoComp.renderSize    = canvas
+        videoComp.frameDuration = CMTime(value: 1, timescale: 30)
+        videoComp.instructions  = [instruction]
         return videoComp
     }
 
-    private func buildTextLayer(clip: VlogClip, canvas: CGSize, totalSeconds: Double) -> CALayer? {
-        guard !clip.texts.isEmpty else { return nil }
+    /// すでにキャンバスサイズへ変換済みのフレーム（BGRA）に、直接「ひとこと」と時刻を描き込む。
+    private func drawCaptionOverlay(
+        onto pixelBuffer: CVPixelBuffer, canvas: CGSize,
+        positionMs: Int64, spans: [(spanStart: Int64, spanEnd: Int64, text: String)], timeText: String
+    ) {
+        CVPixelBufferLockBaseAddress(pixelBuffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
 
-        // AVVideoCompositionCoreAnimationToolはUIView非経由の素のCALayerツリーを描画するため、
-        // 暗黙アニメーション（プロパティ変更に自動で付くフェード等）が有効なまま。無効化しておかないと
-        // 書き出し直後の数フレームだけ文字が出ない、という既知の症状が起きる。
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        defer { CATransaction.commit() }
+        guard let ctx = CGContext(
+            data: CVPixelBufferGetBaseAddress(pixelBuffer),
+            width: Int(canvas.width), height: Int(canvas.height),
+            bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(pixelBuffer),
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
+        ) else { return }
 
-        let parent = CALayer()
-        parent.frame = CGRect(origin: .zero, size: canvas)
-        parent.isGeometryFlipped = true  // use UIKit-like top-left origin
-        parent.beginTime = AVCoreAnimationBeginTimeAtZero
-
-        let spans  = clip.visibleTextSpans()   // relative to trimStart
-        let lineH  = VlogLayout.hitokoroFontSize + VlogLayout.hitokoroLineGap
-        let font   = UIFont(name: VlogFonts.logoTypeName, size: VlogLayout.hitokoroFontSize)
-            ?? UIFont.boldSystemFont(ofSize: VlogLayout.hitokoroFontSize)
-
-        for span in spans {
-            let startSec = Double(span.spanStart) / 1000.0
-            let endSec   = Double(span.spanEnd)   / 1000.0
-            let lines    = span.text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-            let totalH   = CGFloat(lines.count) * lineH - VlogLayout.hitokoroLineGap
-            let topY     = canvas.height * 0.5 - totalH / 2  // 上下左右中央
-
-            for (lineIdx, line) in lines.enumerated() {
-                guard !line.isEmpty else { continue }
-                let tl  = CATextLayer()
-                tl.string   = line
-                tl.font     = font
-                tl.fontSize = VlogLayout.hitokoroFontSize
-                tl.foregroundColor = UIColor.white.cgColor
-                tl.alignmentMode   = .center
-                tl.contentsScale   = 1
-                let y = topY + CGFloat(lineIdx) * lineH
-                tl.frame = CGRect(x: 0, y: y, width: canvas.width, height: lineH)
-                tl.opacity = 0
-
-                addBinaryOpacityAnimation(layer: tl, show: startSec, hide: endSec, total: totalSeconds)
-                parent.addSublayer(tl)
+        // 透明背景のオーバーレイ画像を作り、既存フレームの上へアルファ合成で重ねる
+        let format = UIGraphicsImageRendererFormat()
+        format.opaque = false
+        format.scale  = 1
+        let renderer = UIGraphicsImageRenderer(size: canvas, format: format)
+        let overlay = renderer.image { _ in
+            if let activeText = spans.first(where: { positionMs >= $0.spanStart && positionMs < $0.spanEnd })?.text {
+                drawHitokoto(activeText, canvas: canvas)
             }
+            drawTimestamp(timeText, canvas: canvas)
         }
-
-        // Timestamp: 上下中央・右端 (right-aligned, vertically centered)
-        let tsFont = UIFont(name: VlogFonts.timeFontName, size: VlogLayout.timestampFontSize)
-            ?? UIFont.monospacedSystemFont(ofSize: VlogLayout.timestampFontSize, weight: .medium)
-        let tsTL   = CATextLayer()
-        tsTL.string          = clip.timeText
-        tsTL.font            = tsFont
-        tsTL.fontSize        = VlogLayout.timestampFontSize
-        tsTL.alignmentMode   = .right
-        tsTL.foregroundColor = UIColor.white.cgColor
-        tsTL.contentsScale   = 1
-        // Layer right edge = canvas right - rightPad; wide enough for any HH:mm
-        let tsW: CGFloat     = 300
-        let tsRightEdge      = canvas.width - VlogLayout.timestampRightPad
-        let tsY              = canvas.height * 0.5 - VlogLayout.timestampFontSize * 0.7
-        tsTL.frame           = CGRect(x: tsRightEdge - tsW, y: tsY,
-                                      width: tsW, height: VlogLayout.timestampFontSize * 1.4)
-        tsTL.opacity         = 1
-        parent.addSublayer(tsTL)
-
-        return parent
+        if let cgImage = overlay.cgImage {
+            ctx.draw(cgImage, in: CGRect(origin: .zero, size: canvas))
+        }
     }
 
-    private func addBinaryOpacityAnimation(layer: CALayer, show: Double, hide: Double, total: Double) {
-        guard total > 0 else { layer.opacity = 1; return }
-        let s = max(0.0, min(total, show))
-        let h = max(0.0, min(total, hide))
-        guard s < h else { layer.opacity = 0; return }
+    /// 「ひとこと」：上下左右中央、複数行対応（Android: HITOKOTO_FONT_PT / LINE_SPACING）
+    private func drawHitokoto(_ text: String, canvas: CGSize) {
+        let font = UIFont(name: VlogFonts.logoTypeName, size: VlogLayout.hitokoroFontSize)
+            ?? UIFont.boldSystemFont(ofSize: VlogLayout.hitokoroFontSize)
+        let lineH = VlogLayout.hitokoroFontSize + VlogLayout.hitokoroLineGap
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        let totalH = CGFloat(lines.count) * lineH - VlogLayout.hitokoroLineGap
+        let topY   = canvas.height * 0.5 - totalH / 2
 
-        var times:  [Double] = []
-        var values: [Float]  = []
+        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: UIColor.white]
+        for (idx, line) in lines.enumerated() where !line.isEmpty {
+            let str  = NSAttributedString(string: line, attributes: attrs)
+            let size = str.size()
+            let slotY = topY + CGFloat(idx) * lineH
+            str.draw(in: CGRect(
+                x: (canvas.width - size.width) / 2,
+                y: slotY + (lineH - size.height) / 2,
+                width: size.width, height: size.height
+            ))
+        }
+    }
 
-        if s <= 0 {
-            times.append(0.0)
-            values.append(1.0)
-        } else {
-            times.append(0.0)
-            values.append(0.0)
-            times.append(s / total)
-            values.append(1.0)
+    /// 撮影時刻：上下中央・キャンバス右端基準（Android: TIME_FONT_PT / TIME_MARGIN_PT）
+    private func drawTimestamp(_ text: String, canvas: CGSize) {
+        let font = UIFont(name: VlogFonts.timeFontName, size: VlogLayout.timestampFontSize)
+            ?? UIFont.monospacedSystemFont(ofSize: VlogLayout.timestampFontSize, weight: .medium)
+        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: UIColor.white]
+        let str  = NSAttributedString(string: text, attributes: attrs)
+        let size = str.size()
+        str.draw(in: CGRect(
+            x: canvas.width - VlogLayout.timestampRightPad - size.width,
+            y: (canvas.height - size.height) / 2,
+            width: size.width, height: size.height
+        ))
+    }
+
+    /// 映像だけ焼き込みずみのファイルへ、元動画の音声（トリム区間ぶん）を合流させる。
+    /// 無音にしたい場合は音声トラック自体を作らない（音量0のミックスより単純で確実）。
+    private func mergeClipAudio(
+        videoOnlyURL: URL, sourceAsset: AVAsset, trimRange: CMTimeRange, silent: Bool
+    ) async throws -> URL {
+        let videoOnlyAsset = AVURLAsset(url: videoOnlyURL)
+        let videoDuration  = try await videoOnlyAsset.load(.duration)
+        guard let videoOnlyTrack = try await videoOnlyAsset.loadTracks(withMediaType: .video).first else {
+            throw ExportError.noVideoTrack
         }
 
-        if h < total {
-            times.append(h / total)
-            values.append(0.0)
-            times.append(1.0)
-            values.append(0.0)
-        } else {
-            times.append(1.0)
-            values.append(1.0)
-        }
+        let composition = AVMutableComposition()
+        let compVideo = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)!
+        try compVideo.insertTimeRange(CMTimeRange(start: .zero, duration: videoDuration), of: videoOnlyTrack, at: .zero)
 
-        var sanitizedTimes: [Double] = []
-        var sanitizedValues: [Float] = []
-        for i in 0..<times.count {
-            let t = max(0.0, min(1.0, times[i]))
-            if let lastT = sanitizedTimes.last {
-                if t > lastT {
-                    sanitizedTimes.append(t)
-                    sanitizedValues.append(values[i])
-                } else if t == lastT {
-                    sanitizedValues[sanitizedValues.count - 1] = values[i]
-                }
-            } else {
-                sanitizedTimes.append(t)
-                sanitizedValues.append(values[i])
+        if !silent {
+            let srcAudioTracks = try await sourceAsset.loadTracks(withMediaType: .audio)
+            if let srcAudio = srcAudioTracks.first {
+                let compAudio = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)!
+                try? compAudio.insertTimeRange(trimRange, of: srcAudio, at: .zero)
             }
         }
-        if sanitizedTimes.first != 0.0 {
-            sanitizedTimes.insert(0.0, at: 0)
-            sanitizedValues.insert(values.first ?? 0, at: 0)
-        }
-        if sanitizedTimes.last != 1.0 {
-            sanitizedTimes.append(1.0)
-            sanitizedValues.append(sanitizedValues.last ?? 0)
-        }
 
-        let kf = CAKeyframeAnimation(keyPath: "opacity")
-        kf.calculationMode = .discrete
-        kf.keyTimes  = sanitizedTimes.map  { NSNumber(value: $0) }
-        kf.values    = sanitizedValues.map { NSNumber(value: $0) }
-        kf.duration  = total
-        kf.beginTime = AVCoreAnimationBeginTimeAtZero
-        kf.isRemovedOnCompletion = false
-        kf.fillMode  = .both
-        layer.add(kf, forKey: "opacity")
+        let outURL = tempURL("clip_\(UUID().uuidString)")
+        guard let session = AVAssetExportSession(asset: composition, presetName: AVAssetExportPreset1920x1080) else {
+            throw ExportError.sessionCreationFailed
+        }
+        session.shouldOptimizeForNetworkUse = true
+        try await session.export(to: outURL, as: .mov)
+        return outURL
     }
 
     // MARK: - Concatenation
