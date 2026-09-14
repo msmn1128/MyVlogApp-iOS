@@ -67,6 +67,16 @@ struct ActionButtons: View {
                         guard !store.clips.isEmpty else { return }
                         postStartExport(includeTitle: false)
                     }
+                    // VoiceOver用のアクション（Android: ExportButtonのonClickLabel/onLongClickLabel相当）
+                    .accessibilityLabel("書き出し")
+                    .accessibilityAction {
+                        guard !store.clips.isEmpty else { return }
+                        postStartExport(includeTitle: true)
+                    }
+                    .accessibilityAction(named: "タイトルなしで書き出し") {
+                        guard !store.clips.isEmpty else { return }
+                        postStartExport(includeTitle: false)
+                    }
             }
         }
     }

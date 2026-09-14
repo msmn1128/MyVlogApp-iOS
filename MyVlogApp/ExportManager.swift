@@ -11,6 +11,10 @@ class ExportManager: ObservableObject {
     @Published var isExporting: Bool   = false
     @Published var progress:    Double = 0
     @Published var message:     String = ""
+    /// 完了・中止・失敗を伝える一過性の通知（Android: VlogEvent.MessageのToast相当）。
+    /// isExportingがfalseになってオーバーレイが消えた後も独立して表示され続ける。
+    @Published var toastMessage: String? = nil
+    private var toastTask: Task<Void, Never>?
 
     private var exportTask: Task<Void, Never>?
     /// アプリがバックグラウンドへ回っても書き出しを続けるための延命申請
@@ -46,6 +50,17 @@ class ExportManager: ObservableObject {
         guard backgroundTaskID != .invalid else { return }
         UIApplication.shared.endBackgroundTask(backgroundTaskID)
         backgroundTaskID = .invalid
+    }
+
+    /// 完了・中止・失敗を画面上部/下部のトーストで一時的に知らせる（Android: ToastによるVlogEvent.Message相当）
+    private func showMessage(_ text: String) {
+        toastTask?.cancel()
+        toastMessage = text
+        toastTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run { self?.toastMessage = nil }
+        }
     }
 
     /// 書き出し完了をローカル通知で知らせる（Android: 完了時のToast「ギャラリーに保存しました」相当。
@@ -98,15 +113,20 @@ class ExportManager: ObservableObject {
             progress = 0.9
 
             update("保存中...")
-            try await saveToPhotoLibrary(url: merged)
+            let displayName = displayName(firstClipDateText: clips.first?.dateText ?? "")
+            try await saveToPhotoLibrary(url: merged, displayName: displayName)
             progress = 1.0
             update("完了")
-            notifyCompletion(title: "書き出し完了", body: "ギャラリーに保存しました")
+            let savedMessage = "ギャラリーに保存しました\n\(displayName)"
+            notifyCompletion(title: "書き出し完了", body: savedMessage)
+            showMessage(savedMessage)
         } catch is CancellationError {
             update("")
+            showMessage("書き出しを中止しました")
         } catch {
             update("エラー: \(error.localizedDescription)")
             notifyCompletion(title: "書き出しに失敗しました", body: error.localizedDescription)
+            showMessage(error.localizedDescription)
         }
         for url in tempFiles { try? FileManager.default.removeItem(at: url) }
         isExporting = false
@@ -540,7 +560,17 @@ class ExportManager: ObservableObject {
 
     // MARK: - Save to camera roll
 
-    private func saveToPhotoLibrary(url: URL) async throws {
+    /// ギャラリーでの表示名「Vlog_yyyy-MM-dd.mp4」を組み立てる（Android: buildDisplayNameの
+    /// ベース名部分のみ移植）。Android版は同名チェックにMediaStoreの自アプリファイルを権限なしで
+    /// 参照できるが、iOSで同等の重複チェックをするにはPHPhotoLibraryの読み取り権限
+    /// （.addOnlyより広い権限）が追加で必要になり、書き出しのたびに権限ダイアログが増えてしまう。
+    /// その副作用の方が実害が大きいため、重複チェックは行わずベース名をそのまま使う
+    /// （同名ファイルがあってもPhotosアプリ側でファイル名の衝突は解決される）。
+    private func displayName(firstClipDateText: String) -> String {
+        "Vlog_\(firstClipDateText.replacingOccurrences(of: "/", with: "-")).mp4"
+    }
+
+    private func saveToPhotoLibrary(url: URL, displayName: String) async throws {
         let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
         guard status == .authorized || status == .limited else {
             throw ExportError.photoLibraryAccessDenied
@@ -548,7 +578,10 @@ class ExportManager: ObservableObject {
 
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             PHPhotoLibrary.shared().performChanges({
-                PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
+                let request = PHAssetCreationRequest.forAsset()
+                let options = PHAssetResourceCreationOptions()
+                options.originalFilename = displayName
+                request.addResource(with: .video, fileURL: url, options: options)
             }) { success, error in
                 if success { cont.resume() }
                 else { cont.resume(throwing: error ?? ExportError.saveToLibraryFailed) }

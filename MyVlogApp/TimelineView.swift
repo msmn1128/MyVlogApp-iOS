@@ -68,6 +68,13 @@ struct TimelineView: View {
                                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                                 store.toggleMute(at: idx)
                             }
+                            // VoiceOver用のアクション（Android: combinedClickableのonClickLabel/onLongClickLabel相当）
+                            .accessibilityElement(children: .combine)
+                            .accessibilityAction { store.selectedIndex = idx }
+                            .accessibilityAction(named: clip.isMuted ? "ミュートを解除" : "ミュート") {
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                store.toggleMute(at: idx)
+                            }
                     }
                 }
                 .padding(.vertical, 6)

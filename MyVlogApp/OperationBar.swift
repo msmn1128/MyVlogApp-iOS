@@ -41,12 +41,18 @@ struct OperationBar: View {
                 ToggleIconButton(
                     systemImage: store.timelineMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
                     checked: store.timelineMuted,
+                    contentDescription: store.timelineMuted
+                        ? "タイムラインのミュート：オン（プレビューと書き出しの音を消します）"
+                        : "タイムラインのミュート：オフ",
                     enabled: !store.clips.isEmpty
                 ) { store.toggleTimelineMuted() }
 
                 ToggleIconButton(
                     systemImage: "play.fill",
                     checked: store.isContinuousPlay,
+                    contentDescription: store.isContinuousPlay
+                        ? "連続再生：オン（終わったら次のクリップへ進みます）"
+                        : "連続再生：オフ（クリップの終わりで止まります）",
                     enabled: !store.clips.isEmpty
                 ) { store.toggleContinuousPlay() }
 
@@ -151,6 +157,7 @@ private struct CompactIconButton: View {
 private struct ToggleIconButton: View {
     let systemImage: String
     let checked: Bool
+    let contentDescription: String
     var enabled: Bool = true
     let action: () -> Void
 
@@ -168,6 +175,7 @@ private struct ToggleIconButton: View {
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
+        .accessibilityLabel(contentDescription)
     }
 
     private var iconColor: Color {

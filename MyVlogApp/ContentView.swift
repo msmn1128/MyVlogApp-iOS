@@ -57,7 +57,9 @@ struct ContentView: View {
                         .environmentObject(store)
                 }
 
-                if let toast = store.toastMessage {
+                // 書き出しの完了・中止・失敗トーストを、通常のトースト（store）より優先して
+                // 表示する（同時に出ることは想定していないが、書き出し結果を伝える方を優先）
+                if let toast = exportManager.toastMessage ?? store.toastMessage {
                     ToastView(text: toast)
                 }
             }

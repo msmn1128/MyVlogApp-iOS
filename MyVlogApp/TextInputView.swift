@@ -37,7 +37,7 @@ struct TextInputView: View {
                 // 開かない」問題を根本的に解消する。
                 NativeTextView(
                     text: $text,
-                    placeholder: store.selectedClip == nil ? "動画を選択してください" : "テロップを入力...",
+                    placeholder: store.selectedClip == nil ? "「動画を追加」から動画を選んでください" : "テロップを入力...",
                     onBeginEditing: {
                         isEditing = true
                         playerManager.pause()
