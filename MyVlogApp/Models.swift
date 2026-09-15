@@ -114,6 +114,9 @@ struct VlogClip: Identifiable, Codable, Equatable {
     var trimmedDurationMs: Int64 { max(0, endMs - startMs) }
     var splitPoints: [Int64] { texts.dropFirst().map { $0.startMs } }
 
+    /// トリム範囲内へ丸めたシーク先。波形のドラッグ/タップ処理で繰り返し使う
+    func clampToTrim(_ ms: Int64) -> Int64 { max(startMs, min(endMs, ms)) }
+
     func textIndexAt(positionMs: Int64) -> Int {
         var result = 0
         for (i, seg) in texts.enumerated() {

@@ -15,14 +15,14 @@ struct WaveformView: View {
     // @StateにキャッシュしてonChangeで追従させる方式は更新の抜け漏れが起きやすかったため、
     // 「ドラッグ中でなければ毎回computedで出し直す」方式にしている。ドラッグ中だけ
     // ここに値を入れて据え置く（掴んだ瞬間の表示から指の下の的がズレないように）。
-    @State private var lockedViewport: (start: Int64, end: Int64)? = nil
+    @State private var lockedViewport: WaveformViewport? = nil
     // 描画専用のズーム範囲。指を離した瞬間のリフィットが一瞬でパッと切り替わり、
     // 直前まで見えていた位置と無関係な場所へ枠が飛んだように見えるのを防ぐため、
     // 実際のヒットテスト（xCoord/msAt）とは別に、描画だけこの値を滑らかに追従させる。
     // ドラッグ中はlockedViewportと常に同値なので実質アニメーションは発生せず、
     // ドラッグ終了時（isDragIdleがfalse→trueに切り替わる瞬間）だけ計算し直した
     // 新しいfitWaveformViewportへイーズさせる。
-    @State private var displayViewport: (start: Int64, end: Int64)? = nil
+    @State private var displayViewport: WaveformViewport? = nil
 
     private enum ActiveDrag {
         case none
@@ -69,12 +69,6 @@ struct WaveformView: View {
     private let moveSlop:   CGFloat = 8
     private let longPressSeconds: Double = 0.5
 
-    // Android: WAVEFORM_FIT_FULL_THRESHOLD / MARGIN_RATIO / MIN_MARGIN_MS / MIN_WINDOW_MS
-    private let fitFullThreshold: Double = 0.6
-    private let fitMarginRatio:   Double = 0.5
-    private let fitMinMarginMs:   Int64  = 300
-    private let fitMinWindowMs:   Int64  = 3_000
-
     var body: some View {
         GeometryReader { geo in
             let sz = geo.size
@@ -107,7 +101,7 @@ struct WaveformView: View {
                 if let clip = store.selectedClip {
                     let vp = effectiveViewport(clip: clip)
                     CanvasValueAnimator(value: AnimatablePair(Double(vp.start), Double(vp.end))) { pair in
-                        displayViewport = (Int64(pair.first), Int64(pair.second))
+                        displayViewport = WaveformViewport(start: Int64(pair.first), end: Int64(pair.second))
                     }
                     .animation(.easeInOut(duration: 0.25), value: isDragIdle)
                 }
@@ -133,159 +127,50 @@ struct WaveformView: View {
     /// ドラッグ中はlockedViewportを据え置き、そうでなければ選択範囲から毎回計算し直す
     /// （Android: LaunchedEffect(...isInteracting)相当だが、onChangeの発火漏れを避けるため
     /// キャッシュを信じず常に最新のclipから出し直す設計にしている）。
-    private func effectiveViewport(clip: VlogClip) -> (start: Int64, end: Int64) {
+    private func effectiveViewport(clip: VlogClip) -> WaveformViewport {
         if let locked = lockedViewport, !isDragIdle { return locked }
-        return Self.fitWaveformViewport(
-            startMs: clip.startMs, endMs: clip.endMs, durationMs: clip.durationMs,
-            fullThreshold: fitFullThreshold, marginRatio: fitMarginRatio,
-            minMargin: fitMinMarginMs, minWindow: fitMinWindowMs
-        )
+        return WaveformGeometry.fitViewport(startMs: clip.startMs, endMs: clip.endMs, durationMs: clip.durationMs)
+    }
+
+    private func geometry(w: CGFloat, viewport: WaveformViewport) -> WaveformGeometry {
+        WaveformGeometry.forWidth(w, handleW: handleW, viewport: viewport)
     }
 
     private func xCoord(ms: Int64, w: CGFloat, clip: VlogClip) -> CGFloat {
-        xCoord(ms: ms, w: w, viewport: effectiveViewport(clip: clip))
+        geometry(w: w, viewport: effectiveViewport(clip: clip)).msToX(ms)
     }
 
     /// 描画専用：ヒットテストとは別に、displayViewportで滑らかに追従した位置を返す
     private func displayXCoord(ms: Int64, w: CGFloat, clip: VlogClip) -> CGFloat {
-        xCoord(ms: ms, w: w, viewport: displayViewport ?? effectiveViewport(clip: clip))
-    }
-
-    private func xCoord(ms: Int64, w: CGFloat, viewport: (start: Int64, end: Int64)) -> CGFloat {
-        guard w > 2 * handleW else { return handleW }
-        let span = CGFloat(max(1, viewport.end - viewport.start))
-        return handleW + (CGFloat(ms) - CGFloat(viewport.start)) / span * (w - 2 * handleW)
+        geometry(w: w, viewport: displayViewport ?? effectiveViewport(clip: clip)).msToX(ms)
     }
 
     private func msAt(x: CGFloat, w: CGFloat, clip: VlogClip) -> Int64 {
-        guard w > 2 * handleW else { return 0 }
-        let vp = effectiveViewport(clip: clip)
-        let span = CGFloat(max(1, vp.end - vp.start))
-        let raw = CGFloat(vp.start) + (x - handleW) / (w - 2 * handleW) * span
-        return Int64(max(0, min(CGFloat(clip.durationMs), raw)))
-    }
-
-    /// 選択範囲(startMs〜endMs)に合わせて波形の表示範囲を決める（Android: fitWaveformViewport）。
-    /// 選択範囲が全体の大部分を占めるときは全体表示のまま、一部だけのときは選択範囲＋余白へズームする。
-    private static func fitWaveformViewport(
-        startMs: Int64, endMs: Int64, durationMs: Int64,
-        fullThreshold: Double, marginRatio: Double, minMargin: Int64, minWindow: Int64
-    ) -> (start: Int64, end: Int64) {
-        guard durationMs > 0 else { return (0, 0) }
-        let selectionSpan = max(0, endMs - startMs)
-        if Double(selectionSpan) >= Double(durationMs) * fullThreshold { return (0, durationMs) }
-
-        let margin = max(Int64(Double(selectionSpan) * marginRatio), minMargin)
-        var viewStart = startMs - margin
-        var viewEnd   = endMs + margin
-
-        let shortfall = minWindow - (viewEnd - viewStart)
-        if shortfall > 0 {
-            viewStart -= shortfall / 2
-            viewEnd   += shortfall - shortfall / 2
-        }
-
-        // 動画の端に近い選択範囲では、片側に伸ばせないぶんを反対側へ回して表示幅を保つ
-        if viewStart < 0 {
-            viewEnd -= viewStart
-            viewStart = 0
-        }
-        if viewEnd > durationMs {
-            viewStart -= (viewEnd - durationMs)
-            viewEnd = durationMs
-        }
-        return (max(0, viewStart), min(durationMs, viewEnd))
+        geometry(w: w, viewport: effectiveViewport(clip: clip)).xToMs(x, durationMs: clip.durationMs)
     }
 
     // MARK: - Canvas drawing
 
     private func drawWaveform(ctx: GraphicsContext, size: CGSize) {
         guard let clip = store.selectedClip else { return }
-        let w   = size.width
-        let h   = size.height
-        let leftX  = displayXCoord(ms: clip.startMs, w: w, clip: clip)
-        let rightX = displayXCoord(ms: clip.endMs, w: w, clip: clip)
+        let w = size.width
+        let h = size.height
+        let vp  = displayViewport ?? effectiveViewport(clip: clip)
+        let geo = geometry(w: w, viewport: vp)
+        let leftX  = geo.msToX(clip.startMs)
+        let rightX = geo.msToX(clip.endMs)
 
-        // ── Waveform bars ──
-        // 各バーは「クリップ全体」を均等に分けた時間幅を受け持つ。以前はこの時間幅を
-        // 無視してキャンバス全幅へ均等に敷き詰めていたため、つまみ（枠）だけが
-        // ズーム後の位置へ移動する一方で波形の絵そのものは動かず、「枠が波形と無関係な
-        // 場所へ飛んだ」ように見えていた。ここをAndroid版drawWaveformBars/TrackMetrics.msToXと
-        // 同じ考え方に直し、各バーの中心時刻をdisplayXCoordでズーム後の位置へ変換して描く
-        // （ズーム範囲外のバーは間引く）ことで、つまみだけでなく波形の絵自体がズームするようにする
-        let bins   = waveform.isEmpty ? Array(repeating: Float(0.08), count: 240) : waveform
-        let axisW  = w - 2 * handleW
-        let midY   = h / 2
-        let maxAmp = (h - railH * 2 - 2) / 2
-        let vp     = displayViewport ?? effectiveViewport(clip: clip)
-        let vpSpan = CGFloat(max(1, vp.end - vp.start))
-        let pxPerMs   = axisW / vpSpan
-        let bucketMs  = CGFloat(max(1, clip.durationMs)) / CGFloat(bins.count)
-        let barW      = max(1, bucketMs * pxPerMs * 0.68)
-
-        for (i, amp) in bins.enumerated() {
-            let bucketCenterMs = Int64((CGFloat(i) + 0.5) * bucketMs)
-            let barCenter = displayXCoord(ms: bucketCenterMs, w: w, clip: clip)
-            guard barCenter >= handleW - barW && barCenter <= w - handleW + barW else { continue }
-            let amplitude  = CGFloat(amp) * maxAmp
-            let barRect    = CGRect(x: barCenter - barW / 2, y: midY - amplitude,
-                                    width: barW, height: amplitude * 2)
-            let inRange    = barCenter >= leftX && barCenter <= rightX
-            ctx.fill(Path(roundedRect: barRect, cornerRadius: barW / 2),
-                     with: .color(inRange ? AppColors.waveformFill : AppColors.waveformDim))
-        }
-
-        // ── Trim range rails (top and bottom)。区間ごと移動中は太くする（Android: isMovingTrim） ──
-        let trimW = rightX - leftX
-        let activeRailH = isMovingTrim ? railH + 2 : railH
-        ctx.fill(Path(CGRect(x: leftX, y: 0,               width: trimW, height: activeRailH)), with: .color(AppColors.primary))
-        ctx.fill(Path(CGRect(x: leftX, y: h - activeRailH, width: trimW, height: activeRailH)), with: .color(AppColors.primary))
-
-        // ── Split lines ──
-        // Android版drawSegmentSplitsはトリム範囲外の区切りも（ビューポート内である限り）
-        // そのまま描く。トリムを動かせばまた見える位置なので隠す理由がない
-        let splitColor = AppColors.splitLine(colorScheme)
-        for splitMs in clip.splitPoints {
-            let sx = displayXCoord(ms: splitMs, w: w, clip: clip)
-            var path = Path()
-            path.move(to: CGPoint(x: sx, y: railH + 1))
-            path.addLine(to: CGPoint(x: sx, y: h - railH - 1))
-            ctx.stroke(path, with: .color(splitColor), lineWidth: 2)
-        }
-
-        // ── Trim handles ──
-        drawHandle(ctx: ctx, x: leftX,  h: h, isLeft: true,  scale: leftHandleScale)
-        drawHandle(ctx: ctx, x: rightX, h: h, isLeft: false, scale: rightHandleScale)
-
-        // ── Playhead ──
-        // Android版と同じく、再生位置が今のビューポート外／トリム範囲外なら
-        // 頭出し位置へクランプして描くのではなく、そもそも描かない
-        let posMs = playerManager.currentTimeMs
-        if posMs >= vp.start && posMs <= vp.end && posMs >= clip.startMs && posMs <= clip.endMs {
-            let playX = displayXCoord(ms: posMs, w: w, clip: clip)
-            var headPath = Path()
-            headPath.move(to: CGPoint(x: playX, y: railH + 1))
-            headPath.addLine(to: CGPoint(x: playX, y: h - railH - 1))
-            ctx.stroke(headPath, with: .color(.white), lineWidth: 2)
-            ctx.fill(Path(ellipseIn: CGRect(x: playX - 5, y: railH, width: 10, height: 10)),
-                     with: .color(.white))
-        }
-    }
-
-    private func drawHandle(ctx: GraphicsContext, x: CGFloat, h: CGFloat, isLeft: Bool, scale: CGFloat) {
-        // 掴んでいる側は太さそのものをscaleぶん大きくする。トリム境界に接する辺
-        // （左つまみなら右辺、右つまみなら左辺）は動かさず、外側へだけ広がるようにする
-        let w     = handleW * scale
-        let rx    = isLeft ? x - w : x
-        let rect  = CGRect(x: rx, y: 0, width: w, height: h)
-        ctx.fill(Path(roundedRect: rect, cornerRadius: 3 * scale), with: .color(AppColors.primary))
-        let midX = rx + w / 2
-        for dy: CGFloat in [-5, 0, 5] {
-            var grip = Path()
-            grip.move(to: CGPoint(x: midX - 2.5, y: h / 2 + dy))
-            grip.addLine(to: CGPoint(x: midX + 2.5, y: h / 2 + dy))
-            ctx.stroke(grip, with: .color(.white.opacity(0.7)), lineWidth: 1.5)
-        }
+        // 各描画パートはWaveformDrawing.swiftの純粋関数に切り出してある
+        // （Android: WaveformTrimmer.kt / WaveformTrimmerDrawing.ktと同じ分離）
+        let bins = waveform.isEmpty ? Array(repeating: Float(0.08), count: 240) : waveform
+        drawWaveformBars(ctx: ctx, geo: geo, bins: bins, height: h, railH: railH,
+                          durationMs: clip.durationMs, trimLeftX: leftX, trimRightX: rightX)
+        drawTrimRails(ctx: ctx, leftX: leftX, rightX: rightX, height: h, railH: railH, isMovingTrim: isMovingTrim)
+        drawSplitLines(ctx: ctx, geo: geo, splitPoints: clip.splitPoints, height: h, railH: railH,
+                       color: AppColors.splitLine(colorScheme))
+        drawTrimHandle(ctx: ctx, x: leftX,  height: h, handleW: handleW, isLeft: true,  scale: leftHandleScale)
+        drawTrimHandle(ctx: ctx, x: rightX, height: h, handleW: handleW, isLeft: false, scale: rightHandleScale)
+        drawPlayhead(ctx: ctx, geo: geo, positionMs: playerManager.currentTimeMs, clip: clip, height: h, railH: railH)
     }
 
     // MARK: - Segment number badges
@@ -414,23 +299,24 @@ struct WaveformView: View {
                 let wasPlaying = playerManager.isPlaying
                 if wasPlaying { playerManager.pause() }
                 drag = .seeking(wasPlaying: wasPlaying)
-                let seekMs = max(clip.startMs, min(clip.endMs, msAt(x: loc, w: w, clip: clip)))
+                let seekMs = clip.clampToTrim(msAt(x: loc, w: w, clip: clip))
                 playerManager.seek(to: seekMs)
             }
 
         case .seeking:
-            let seekMs = max(clip.startMs, min(clip.endMs, msAt(x: loc, w: w, clip: clip)))
+            let seekMs = clip.clampToTrim(msAt(x: loc, w: w, clip: clip))
             playerManager.seek(to: seekMs)
 
         case .movingTrim(let originalStart, let anchorX, _):
-            let vp = effectiveViewport(clip: clip)
-            let span = CGFloat(max(1, vp.end - vp.start))
-            let pxPerMs = (w - 2 * handleW) / span
+            let pxPerMs = geometry(w: w, viewport: effectiveViewport(clip: clip)).pxPerMs
             guard pxPerMs > 0 else { return }
             let deltaMs = Int64((loc - anchorX) / pxPerMs)
             if let result = store.moveTrim(targetStartMs: originalStart + deltaMs) {
                 playerManager.updateTrimBounds(startMs: result.startMs, endMs: result.endMs)
-                playerManager.seek(to: max(result.startMs, min(result.endMs, msAt(x: loc, w: w, clip: clip))))
+                // clip.clampToTrimは使わない：clipはmoveTrim前の古いstart/endMsのままで、
+                // resultが今回動かした後の新しい範囲。ここは必ずresultでクランプする
+                let seekMs = max(result.startMs, min(result.endMs, msAt(x: loc, w: w, clip: clip)))
+                playerManager.seek(to: seekMs)
             }
 
         case .none:
@@ -449,7 +335,7 @@ struct WaveformView: View {
         case .pendingBody(let downX):
             // 動かさずに離した＝タップ。その場へ頭出し（Android: DragOutcome.Released）
             if let clip = store.selectedClip {
-                let seekMs = max(clip.startMs, min(clip.endMs, msAt(x: downX, w: size.width, clip: clip)))
+                let seekMs = clip.clampToTrim(msAt(x: downX, w: size.width, clip: clip))
                 playerManager.seek(to: seekMs)
             }
 
@@ -461,7 +347,7 @@ struct WaveformView: View {
             // 実際に動かした形跡（moveSlopを超える移動）が無ければタップとして扱い、
             // grabOffsetを無視して実際にタップした位置へそのままシークし直す。
             if abs(value.location.x - value.startLocation.x) <= moveSlop, let clip = store.selectedClip {
-                let seekMs = max(clip.startMs, min(clip.endMs, msAt(x: value.location.x, w: size.width, clip: clip)))
+                let seekMs = clip.clampToTrim(msAt(x: value.location.x, w: size.width, clip: clip))
                 playerManager.seek(to: seekMs)
             }
 
@@ -473,7 +359,7 @@ struct WaveformView: View {
             // （「分割位置はドラッグで動くのに、ただのタップだと再生バーが動かない」不具合）。
             // 離した位置がanchorXからほぼ動いていなければ、タップとして扱いその場へ頭出しする。
             if abs(value.location.x - anchorX) <= moveSlop, let clip = store.selectedClip {
-                let seekMs = max(clip.startMs, min(clip.endMs, msAt(x: value.location.x, w: size.width, clip: clip)))
+                let seekMs = clip.clampToTrim(msAt(x: value.location.x, w: size.width, clip: clip))
                 playerManager.seek(to: seekMs)
             }
 
