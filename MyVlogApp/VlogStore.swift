@@ -64,6 +64,26 @@ class VlogStore: ObservableObject {
         clips[i] = clip
     }
 
+    /// 選択中クリップの変更の定型（履歴記録→変更→反映→自動保存）を1か所にまとめる
+    /// （Android: VlogViewModel.updateSelected{}）。
+    /// ⚠️ 事前バリデーションで「何もしない」場合がある操作（moveTrim/moveSplit/splitAt）は、
+    /// 変更が実際にあるかどうかの判定を済ませてから呼ぶこと。ここに入った時点で
+    /// 必ず履歴が1件積まれる（無駄なundoスタック消費を避けるため）。
+    private func updateSelected(tag: String? = nil, _ transform: (inout VlogClip) -> Void) {
+        guard var clip = selectedClip else { return }
+        recordForUndo(tag: tag)
+        transform(&clip)
+        updateSelectedClip(clip)
+        scheduleAutoSave()
+    }
+
+    /// clips配列そのものを触る操作（追加・削除・並べ替え・ミュート）の定型
+    private func mutateClips(tag: String? = nil, _ body: () -> Void) {
+        recordForUndo(tag: tag)
+        body()
+        scheduleAutoSave()
+    }
+
     // MARK: - Undo / Redo public
 
     var canUndo: Bool { !undoStack.isEmpty }
@@ -112,39 +132,39 @@ class VlogStore: ObservableObject {
     /// 撮影/作成日時順になる位置へ追加し、追加した中で最も古いものを選択する（Android: addClips/mergeByShotAt）
     func addClips(_ newClips: [VlogClip]) {
         guard !newClips.isEmpty else { return }
-        recordForUndo()
         let oldestAddedId = newClips.min { $0.sortKeyMs < $1.sortKeyMs }?.id
 
-        var result = clips
-        for clip in newClips.sorted(by: { $0.sortKeyMs < $1.sortKeyMs }) {
-            let index = result.firstIndex { $0.sortKeyMs > clip.sortKeyMs } ?? result.count
-            result.insert(clip, at: index)
-        }
-        clips = result
+        mutateClips {
+            var result = clips
+            for clip in newClips.sorted(by: { $0.sortKeyMs < $1.sortKeyMs }) {
+                let index = result.firstIndex { $0.sortKeyMs > clip.sortKeyMs } ?? result.count
+                result.insert(clip, at: index)
+            }
+            clips = result
 
-        if let id = oldestAddedId, let index = clips.firstIndex(where: { $0.id == id }) {
-            selectedIndex = index
+            if let id = oldestAddedId, let index = clips.firstIndex(where: { $0.id == id }) {
+                selectedIndex = index
+            }
         }
-        scheduleAutoSave()
     }
 
     func deleteClip(at index: Int) {
         guard clips.indices.contains(index) else { return }
-        recordForUndo()
-        clips.remove(at: index)
-        if clips.isEmpty {
-            selectedIndex = nil
-        } else if let si = selectedIndex {
-            selectedIndex = min(si, clips.count - 1)
+        mutateClips {
+            clips.remove(at: index)
+            if clips.isEmpty {
+                selectedIndex = nil
+            } else if let si = selectedIndex {
+                selectedIndex = min(si, clips.count - 1)
+            }
         }
-        scheduleAutoSave()
     }
 
     func deleteAllClips() {
-        recordForUndo()
-        clips.removeAll()
-        selectedIndex = nil
-        scheduleAutoSave()
+        mutateClips {
+            clips.removeAll()
+            selectedIndex = nil
+        }
     }
 
     func moveClipLeft() {
@@ -158,27 +178,26 @@ class VlogStore: ObservableObject {
     }
 
     private func moveClip(from: Int, to: Int) {
-        recordForUndo()
-        let clip = clips.remove(at: from)
-        clips.insert(clip, at: to)
-        if selectedIndex == from {
-            selectedIndex = to
-        } else if let si = selectedIndex {
-            if from < to, si > from, si <= to { selectedIndex = si - 1 }
-            else if from > to, si >= to, si < from { selectedIndex = si + 1 }
+        mutateClips {
+            let clip = clips.remove(at: from)
+            clips.insert(clip, at: to)
+            if selectedIndex == from {
+                selectedIndex = to
+            } else if let si = selectedIndex {
+                if from < to, si > from, si <= to { selectedIndex = si - 1 }
+                else if from > to, si >= to, si < from { selectedIndex = si + 1 }
+            }
         }
-        scheduleAutoSave()
     }
 
     // MARK: - Trim
 
     func updateTrim(startMs: Int64, endMs: Int64) {
-        guard var clip = selectedClip, let i = selectedIndex else { return }
-        recordForUndo(tag: "trim:\(i)")
-        clip.startMs = startMs
-        clip.endMs   = endMs
-        updateSelectedClip(clip)
-        scheduleAutoSave()
+        guard let i = selectedIndex else { return }
+        updateSelected(tag: "trim:\(i)") { clip in
+            clip.startMs = startMs
+            clip.endMs   = endMs
+        }
     }
 
     /// 先頭から指定の長さだけトリムする（Android: applyTrimPreset）
@@ -192,27 +211,26 @@ class VlogStore: ObservableObject {
     /// ひとことの区切り（先頭は除く）も同じ分だけ一緒にずらす。
     @discardableResult
     func moveTrim(targetStartMs: Int64) -> (startMs: Int64, endMs: Int64)? {
-        guard var clip = selectedClip else { return nil }
+        guard let clip = selectedClip else { return nil }
         let span = clip.trimmedDurationMs
         guard span > 0 else { return nil }
 
         let maxStart = max(0, clip.durationMs - span)
         let newStart = min(max(targetStartMs, 0), maxStart)
         guard newStart != clip.startMs else { return (clip.startMs, clip.endMs) }
-        let delta   = newStart - clip.startMs
-        let newEnd  = newStart + span
+        let delta  = newStart - clip.startMs
+        let newEnd = newStart + span
 
-        recordForUndo(tag: "trimMove:\(selectedIndex ?? -1)")
-        clip.startMs = newStart
-        clip.endMs   = newEnd
-        clip.texts = clip.texts.map { seg in
-            guard seg.startMs != 0 else { return seg }
-            var s = seg
-            s.startMs = min(max(seg.startMs + delta, 1), max(clip.durationMs, 1))
-            return s
+        updateSelected(tag: "trimMove:\(selectedIndex ?? -1)") { c in
+            c.startMs = newStart
+            c.endMs   = newEnd
+            c.texts = c.texts.map { seg in
+                guard seg.startMs != 0 else { return seg }
+                var s = seg
+                s.startMs = min(max(seg.startMs + delta, 1), max(c.durationMs, 1))
+                return s
+            }
         }
-        updateSelectedClip(clip)
-        scheduleAutoSave()
         return (newStart, newEnd)
     }
 
@@ -220,7 +238,7 @@ class VlogStore: ObservableObject {
     /// 前後の区切り（無ければクリップの端／トリム終端）を越えないようクランプする。
     @discardableResult
     func moveSplit(index: Int, newAtMs: Int64) -> Int64? {
-        guard var clip = selectedClip, clip.texts.indices.contains(index), index != 0 else { return nil }
+        guard let clip = selectedClip, clip.texts.indices.contains(index), index != 0 else { return nil }
         let minGap = VlogClip.splitMinDistanceMs
         let lowerBound = clip.texts[index - 1].startMs + minGap
         let upperBound = (clip.texts.indices.contains(index + 1) ? clip.texts[index + 1].startMs : clip.endMs) - minGap
@@ -229,53 +247,54 @@ class VlogStore: ObservableObject {
         let clamped = min(max(newAtMs, lowerBound), upperBound)
         guard clamped != clip.texts[index].startMs else { return clamped }
 
-        recordForUndo(tag: "splitMove:\(selectedIndex ?? -1):\(index)")
-        clip.texts[index].startMs = clamped
-        updateSelectedClip(clip)
-        scheduleAutoSave()
+        updateSelected(tag: "splitMove:\(selectedIndex ?? -1):\(index)") { c in
+            c.texts[index].startMs = clamped
+        }
         return clamped
     }
 
     // MARK: - Text / Split
 
     func updateText(_ text: String, segmentIndex: Int) {
-        guard var clip = selectedClip, let i = selectedIndex else { return }
-        guard clip.texts.indices.contains(segmentIndex) else { return }
-        recordForUndo(tag: "text:\(i):\(segmentIndex)")
-        clip.texts[segmentIndex].text = text
-        updateSelectedClip(clip)
-        scheduleAutoSave()
+        guard let i = selectedIndex, let clip = selectedClip,
+              clip.texts.indices.contains(segmentIndex) else { return }
+        updateSelected(tag: "text:\(i):\(segmentIndex)") { c in
+            c.texts[segmentIndex].text = text
+        }
     }
 
     /// Inserts a split at positionMs. Returns the new segment index on success.
     @discardableResult
     func splitAt(positionMs: Int64) -> Int? {
-        guard var clip = selectedClip else { return nil }
+        guard let clip = selectedClip else { return nil }
         let minDist = VlogClip.splitMinDistanceMs
         guard positionMs - clip.startMs >= minDist,
               clip.endMs - positionMs >= minDist else { return nil }
         for pt in clip.splitPoints where abs(pt - positionMs) < minDist { return nil }
 
-        recordForUndo()
         let newSeg = TextSegment(startMs: positionMs, text: "ひとこと")
         let insertIdx = clip.texts.firstIndex(where: { $0.startMs > positionMs }) ?? clip.texts.count
-        clip.texts.insert(newSeg, at: insertIdx)
-        updateSelectedClip(clip)
-        scheduleAutoSave()
+        updateSelected { c in
+            c.texts.insert(newSeg, at: insertIdx)
+        }
         return insertIdx
     }
 
     func removeSplitNear(positionMs: Int64) {
-        guard var clip = selectedClip else { return }
-        guard let splitMs = clip.splitPointNear(positionMs: positionMs) else { return }
-        recordForUndo()
-        clip.texts.removeAll { $0.startMs == splitMs }
-        updateSelectedClip(clip)
-        scheduleAutoSave()
+        guard let clip = selectedClip, let splitMs = clip.splitPointNear(positionMs: positionMs) else { return }
+        updateSelected { c in
+            c.texts.removeAll { $0.startMs == splitMs }
+        }
     }
 
     // MARK: - Continuous play
 
+    // toggleContinuousPlay/toggleTimelineMutedはrecordForUndo/scheduleAutoSaveを
+    // 経由しない。これはクリップのデータではなく「アプリの設定」（UserDefaultsに
+    // 直接保存）だから。autosaveはclips/selectedIndexしか対象にしておらず、undo
+    // スタックもクリップの編集履歴のためのものなので、意図的にどちらも通さない
+    // （toggleMute(at:)はclips[index].isMutedというクリップ自身のデータなので
+    // 対照的にrecordForUndo/scheduleAutoSaveの対象になる）。
     func toggleContinuousPlay() {
         isContinuousPlay.toggle()
         UserDefaults.standard.set(isContinuousPlay, forKey: continuousPlayKey)
@@ -290,9 +309,9 @@ class VlogStore: ObservableObject {
 
     func toggleMute(at index: Int) {
         guard clips.indices.contains(index) else { return }
-        recordForUndo(tag: "mute:\(index)")
-        clips[index].isMuted.toggle()
-        scheduleAutoSave()
+        mutateClips(tag: "mute:\(index)") {
+            clips[index].isMuted.toggle()
+        }
     }
 
     // MARK: - Toast
@@ -361,10 +380,10 @@ class VlogStore: ObservableObject {
     }
 
     func loadProject(_ project: SavedProject) {
-        recordForUndo()
-        clips         = project.clips
-        selectedIndex = clips.isEmpty ? nil : 0
-        scheduleAutoSave()
+        mutateClips {
+            clips         = project.clips
+            selectedIndex = clips.isEmpty ? nil : 0
+        }
     }
 
     /// 既存の保存を、名前とidはそのままに現在の編集内容で上書きする（Android: overwriteProject）
