@@ -113,7 +113,6 @@ class VideoPlayerManager: ObservableObject {
     func play()               { player.play(); isPlaying = true }
     func pause()              { player.pause(); isPlaying = false }
     func togglePlayPause()    { isPlaying ? pause() : play() }
-    func seekToStart()        { seek(to: trimStartMs) }
 
     func seek(to ms: Int64) {
         guard ms >= 0 else { return }

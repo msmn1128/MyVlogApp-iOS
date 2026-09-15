@@ -24,7 +24,6 @@ class VlogStore: ObservableObject {
     @Published var selectedIndex: Int? = nil
     @Published var isContinuousPlay: Bool
     @Published var savedProjects: [SavedProject] = []
-    @Published var excludedCount: Int = 0
     /// 一時的な通知メッセージ（Android: VlogEvent.Message / Toast相当）
     @Published var toastMessage: String? = nil
     private var toastTask: Task<Void, Never>?
@@ -342,8 +341,7 @@ class VlogStore: ObservableObject {
                 excluded += 1
             }
         }
-        clips         = loaded
-        excludedCount = excluded
+        clips = loaded
         if let si = savedIndex, loaded.indices.contains(si) { selectedIndex = si }
         else if !loaded.isEmpty { selectedIndex = 0 }
 

@@ -23,14 +23,6 @@ actor AssetLoader {
         return asset
     }
 
-    func invalidate(clip: VlogClip) {
-        cache.removeValue(forKey: cacheKey(for: clip))
-    }
-
-    func clearAll() {
-        cache.removeAll()
-    }
-
     private func cacheKey(for clip: VlogClip) -> String {
         clip.assetIdentifier ?? clip.resolvedFileURL?.absoluteString ?? clip.id.uuidString
     }

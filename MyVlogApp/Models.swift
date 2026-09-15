@@ -112,7 +112,6 @@ struct VlogClip: Identifiable, Codable, Equatable {
     static let splitMinDistanceMs: Int64 = 400
 
     var trimmedDurationMs: Int64 { max(0, endMs - startMs) }
-    var isValid: Bool { durationMs > 0 && endMs > startMs }
     var splitPoints: [Int64] { texts.dropFirst().map { $0.startMs } }
 
     func textIndexAt(positionMs: Int64) -> Int {

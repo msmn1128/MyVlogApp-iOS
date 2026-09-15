@@ -38,12 +38,12 @@ struct PreviewView: View {
 
     private func overlayContent(clip: VlogClip, canvas: CGSize, scale: CGFloat) -> some View {
         let pos          = playerManager.currentTimeMs
-        let hitokoroText = clip.textAt(positionMs: pos)
+        let hitokotoText = clip.textAt(positionMs: pos)
         let timeText     = clip.timeText
 
         return ZStack {
             // ─── ひとこと: 上下左右中央 ───
-            hitokoroOverlay(text: hitokoroText, canvas: canvas, scale: scale)
+            hitokotoOverlay(text: hitokotoText, canvas: canvas, scale: scale)
 
             // ─── タイムスタンプ: 上下中央・右端 ───
             HStack {
@@ -58,10 +58,10 @@ struct PreviewView: View {
         .allowsHitTesting(false)
     }
 
-    private func hitokoroOverlay(text: String, canvas: CGSize, scale: CGFloat) -> some View {
+    private func hitokotoOverlay(text: String, canvas: CGSize, scale: CGFloat) -> some View {
         let lines      = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        let fontSize   = VlogLayout.hitokoroFontSize * scale
-        let lineGap    = VlogLayout.hitokoroLineGap * scale
+        let fontSize   = VlogLayout.hitokotoFontSize * scale
+        let lineGap    = VlogLayout.hitokotoLineGap * scale
         let lineHeight = fontSize + lineGap
         // 上下左右中央: Y は canvas 中心から均等に配置（ExportManagerのdrawHitokotoと
         // 同じ計算をVlogLayout.hitokotoBlockTopに共通化している）

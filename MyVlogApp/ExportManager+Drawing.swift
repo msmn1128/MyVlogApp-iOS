@@ -115,14 +115,14 @@ extension ExportManager {
 
     /// 「ひとこと」：上下左右中央、複数行対応（Android: HITOKOTO_FONT_PT / LINE_SPACING）
     private func drawHitokoto(_ text: String, canvas: CGSize) {
-        let font = UIFont(name: VlogFonts.logoTypeName, size: VlogLayout.hitokoroFontSize)
-            ?? UIFont.boldSystemFont(ofSize: VlogLayout.hitokoroFontSize)
-        let lineH = VlogLayout.hitokoroFontSize + VlogLayout.hitokoroLineGap
+        let font = UIFont(name: VlogFonts.logoTypeName, size: VlogLayout.hitokotoFontSize)
+            ?? UIFont.boldSystemFont(ofSize: VlogLayout.hitokotoFontSize)
+        let lineH = VlogLayout.hitokotoFontSize + VlogLayout.hitokotoLineGap
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        // PreviewViewのhitokoroOverlayと同じ計算をVlogLayout.hitokotoBlockTopに共通化している
+        // PreviewViewのhitokotoOverlayと同じ計算をVlogLayout.hitokotoBlockTopに共通化している
         let topY  = VlogLayout.hitokotoBlockTop(
             lineCount: lines.count, canvasHeight: canvas.height,
-            fontSize: VlogLayout.hitokoroFontSize, lineGap: VlogLayout.hitokoroLineGap
+            fontSize: VlogLayout.hitokotoFontSize, lineGap: VlogLayout.hitokotoLineGap
         )
 
         let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: UIColor.white]

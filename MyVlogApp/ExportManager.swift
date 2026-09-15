@@ -133,15 +133,15 @@ class ExportManager: ObservableObject {
 
     private func createTitleCard(clips: [VlogClip]) async throws -> URL {
         let url = tempURL("title_card")
-        let size = CGSize(width: 1920, height: 1080)
+        let size = VlogLayout.canvasSize
         let fps: Int32 = 30
         let totalFrames = Int(VlogLayout.titleCardDuration * Double(fps))  // 60 frames
 
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
         let settings: [String: Any] = [
             AVVideoCodecKey:  AVVideoCodecType.h264,
-            AVVideoWidthKey:  1920,
-            AVVideoHeightKey: 1080
+            AVVideoWidthKey:  size.width,
+            AVVideoHeightKey: size.height
         ]
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         input.expectsMediaDataInRealTime = false
@@ -149,8 +149,8 @@ class ExportManager: ObservableObject {
             assetWriterInput: input,
             sourcePixelBufferAttributes: [
                 kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-                kCVPixelBufferWidthKey as String:  1920,
-                kCVPixelBufferHeightKey as String: 1080
+                kCVPixelBufferWidthKey as String:  size.width,
+                kCVPixelBufferHeightKey as String: size.height
             ]
         )
         writer.add(input)
@@ -224,7 +224,7 @@ class ExportManager: ObservableObject {
 
     private func processClip(_ clip: VlogClip, silent: Bool) async throws -> URL {
         let asset  = try await AssetLoader.shared.load(clip: clip)
-        let canvas = CGSize(width: 1920, height: 1080)
+        let canvas = VlogLayout.canvasSize
         let videoTracks = try await asset.load(.tracks).filter { $0.mediaType == .video }
         guard let srcVideo = videoTracks.first else { throw ExportError.noVideoTrack }
 
@@ -447,20 +447,6 @@ class ExportManager: ObservableObject {
 
     private func update(_ msg: String) {
         message = msg
-    }
-
-    static func videoRect(clip: VlogClip, canvas: CGSize) -> CGRect {
-        let vW = CGFloat(max(1, clip.width))
-        let vH = CGFloat(max(1, clip.height))
-        let clipAR   = vW / vH
-        let canvasAR = canvas.width / canvas.height
-        if clipAR > canvasAR {
-            let h = canvas.width / clipAR
-            return CGRect(x: 0, y: (canvas.height - h) / 2, width: canvas.width, height: h)
-        } else {
-            let w = canvas.height * clipAR
-            return CGRect(x: (canvas.width - w) / 2, y: 0, width: w, height: canvas.height)
-        }
     }
 }
 

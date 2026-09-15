@@ -15,10 +15,6 @@ actor WaveformExtractor {
         return result
     }
 
-    func invalidate(clipID: UUID) {
-        cache.removeValue(forKey: clipID)
-    }
-
     // MARK: - Private
 
     private func compute(asset: AVAsset, bins: Int) async -> [Float] {

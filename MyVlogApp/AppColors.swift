@@ -73,35 +73,3 @@ extension Color {
         )
     }
 }
-
-/// Layout/render constants shared between preview and export
-enum VlogLayout {
-    static let canvasWidth:  CGFloat = 1920
-    static let canvasHeight: CGFloat = 1080
-    static let hitokoroFontSize:  CGFloat = 70
-    static let hitokoroLineGap:   CGFloat = 10
-    static let timestampFontSize: CGFloat = 60
-    static let timestampRightPad: CGFloat = 40
-    static let titleVlogFontSize: CGFloat = 150
-    static let titleDateFontSize: CGFloat = 50
-    static let titleVlogYOffset:  CGFloat = -70
-    static let titleDateYOffset:  CGFloat = 80
-    static let titleCardDuration: Double  = 2.0
-    /// タイトルカードのSFXを鳴らし始めるフレーム番号（1始まり、30fps）。Android: TITLE_SFX_FRAME_NUMBER
-    static let titleSfxFrameNumber: Int = 21
-
-    /// Android: TOOLBAR_BUTTON_SIZE / TOOLBAR_ICON_SIZE
-    static let toolbarButtonSize: CGFloat = 48
-    static let toolbarIconSize:   CGFloat = 20
-
-    /// 「ひとこと」複数行ブロックの先頭行の上端Y（キャンバス上下中央に配置）。
-    /// PreviewView（SwiftUI描画）とExportManager（CGContext描画）の両方で使う、
-    /// 数値としては完全に同一の計算（過去にここがズレて「プレビューと書き出しの
-    /// 黒帯基準ズレ」という不具合になったことがあるため、1箇所にまとめている）。
-    static func hitokotoBlockTop(lineCount: Int, canvasHeight: CGFloat, fontSize: CGFloat, lineGap: CGFloat) -> CGFloat {
-        guard lineCount > 0 else { return canvasHeight * 0.5 }
-        let lineHeight = fontSize + lineGap
-        let totalHeight = lineHeight * CGFloat(lineCount) - lineGap
-        return canvasHeight * 0.5 - totalHeight / 2
-    }
-}
