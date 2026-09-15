@@ -238,32 +238,13 @@ struct WaveformView: View {
         let rightX = xCoord(ms: clip.endMs, w: w, clip: clip)
 
         // Determine mode on first event (translation ≈ zero)。
-        // Android hitTestTrim: 端 > 分割ライン > 本体、の優先順で一番近いものを掴む。
         if case .none = drag {
             // ドラッグ開始の瞬間の表示範囲で固定する（Android: isInteracting中は据え置き）
             lockedViewport = effectiveViewport(clip: clip)
             playerManager.beginInteractiveSeek()
-            let sl = value.startLocation.x
-            let dLeft  = abs(sl - leftX)
-            let dRight = abs(sl - rightX)
-            let nearestHandleDist = min(dLeft, dRight)
-
-            var nearestSplitIndex: Int? = nil
-            var nearestSplitDist: CGFloat = .greatestFiniteMagnitude
-            for (i, seg) in clip.texts.enumerated() where i > 0 {
-                let sx = xCoord(ms: seg.startMs, w: w, clip: clip)
-                let d  = abs(sl - sx)
-                if d < nearestSplitDist { nearestSplitDist = d; nearestSplitIndex = i }
-            }
-
-            if nearestHandleDist <= handleHit && nearestHandleDist <= nearestSplitDist {
-                drag = dLeft <= dRight ? .trimLeft(grabOffset: sl - leftX) : .trimRight(grabOffset: sl - rightX)
-            } else if let splitIdx = nearestSplitIndex, nearestSplitDist <= handleHit {
-                let splitX = xCoord(ms: clip.texts[splitIdx].startMs, w: w, clip: clip)
-                drag = .splitMove(index: splitIdx, grabOffset: sl - splitX)
-            } else {
-                drag = .pendingBody(downX: sl)
-                schedulePendingBodyTimeout(downX: sl)
+            drag = beginDrag(at: value.startLocation.x, w: w, clip: clip, leftX: leftX, rightX: rightX)
+            if case .pendingBody(let downX) = drag {
+                schedulePendingBodyTimeout(downX: downX)
             }
         }
 
@@ -271,53 +252,22 @@ struct WaveformView: View {
 
         switch drag {
         case .trimLeft(let off):
-            let newX  = max(handleW, min(rightX - handleW, loc - off))
-            let newMs = max(0, min(clip.endMs - VlogClip.minTrimMs, msAt(x: newX, w: w, clip: clip)))
-            store.updateTrim(startMs: newMs, endMs: clip.endMs)
-            playerManager.seek(to: newMs)
-            playerManager.updateTrimBounds(startMs: newMs, endMs: clip.endMs)
+            dragTrimHandle(isLeft: true, grabOffset: off, loc: loc, w: w, clip: clip, leftX: leftX, rightX: rightX)
 
         case .trimRight(let off):
-            let newX  = max(leftX + handleW, min(w - handleW, loc - off))
-            let newMs = max(clip.startMs + VlogClip.minTrimMs,
-                            min(clip.durationMs, msAt(x: newX, w: w, clip: clip)))
-            store.updateTrim(startMs: clip.startMs, endMs: newMs)
-            playerManager.seek(to: newMs)
-            playerManager.updateTrimBounds(startMs: clip.startMs, endMs: newMs)
+            dragTrimHandle(isLeft: false, grabOffset: off, loc: loc, w: w, clip: clip, leftX: leftX, rightX: rightX)
 
         case .splitMove(let index, let off):
-            let newMs = msAt(x: loc - off, w: w, clip: clip)
-            if let clamped = store.moveSplit(index: index, newAtMs: newMs) {
-                playerManager.seek(to: clamped)
-            }
+            dragSplitLine(index: index, grabOffset: off, loc: loc, w: w, clip: clip)
 
         case .pendingBody(let downX):
-            let movedX = abs(value.location.x - downX)
-            let movedY = abs(value.translation.height)
-            if movedX > moveSlop || movedY > moveSlop {
-                pendingBodyTask?.cancel(); pendingBodyTask = nil
-                let wasPlaying = playerManager.isPlaying
-                if wasPlaying { playerManager.pause() }
-                drag = .seeking(wasPlaying: wasPlaying)
-                let seekMs = clip.clampToTrim(msAt(x: loc, w: w, clip: clip))
-                playerManager.seek(to: seekMs)
-            }
+            dragPendingBody(downX: downX, value: value, w: w, clip: clip)
 
         case .seeking:
-            let seekMs = clip.clampToTrim(msAt(x: loc, w: w, clip: clip))
-            playerManager.seek(to: seekMs)
+            dragSeek(loc: loc, w: w, clip: clip)
 
         case .movingTrim(let originalStart, let anchorX, _):
-            let pxPerMs = geometry(w: w, viewport: effectiveViewport(clip: clip)).pxPerMs
-            guard pxPerMs > 0 else { return }
-            let deltaMs = Int64((loc - anchorX) / pxPerMs)
-            if let result = store.moveTrim(targetStartMs: originalStart + deltaMs) {
-                playerManager.updateTrimBounds(startMs: result.startMs, endMs: result.endMs)
-                // clip.clampToTrimは使わない：clipはmoveTrim前の古いstart/endMsのままで、
-                // resultが今回動かした後の新しい範囲。ここは必ずresultでクランプする
-                let seekMs = max(result.startMs, min(result.endMs, msAt(x: loc, w: w, clip: clip)))
-                playerManager.seek(to: seekMs)
-            }
+            dragMoveTrim(originalStart: originalStart, anchorX: anchorX, loc: loc, w: w, clip: clip)
 
         case .none:
             break
@@ -335,8 +285,7 @@ struct WaveformView: View {
         case .pendingBody(let downX):
             // 動かさずに離した＝タップ。その場へ頭出し（Android: DragOutcome.Released）
             if let clip = store.selectedClip {
-                let seekMs = clip.clampToTrim(msAt(x: downX, w: size.width, clip: clip))
-                playerManager.seek(to: seekMs)
+                finishTap(at: downX, w: size.width, clip: clip)
             }
 
         case .splitMove:
@@ -347,8 +296,7 @@ struct WaveformView: View {
             // 実際に動かした形跡（moveSlopを超える移動）が無ければタップとして扱い、
             // grabOffsetを無視して実際にタップした位置へそのままシークし直す。
             if abs(value.location.x - value.startLocation.x) <= moveSlop, let clip = store.selectedClip {
-                let seekMs = clip.clampToTrim(msAt(x: value.location.x, w: size.width, clip: clip))
-                playerManager.seek(to: seekMs)
+                finishTap(at: value.location.x, w: size.width, clip: clip)
             }
 
         case .movingTrim(_, let anchorX, let wasPlaying):
@@ -359,8 +307,7 @@ struct WaveformView: View {
             // （「分割位置はドラッグで動くのに、ただのタップだと再生バーが動かない」不具合）。
             // 離した位置がanchorXからほぼ動いていなければ、タップとして扱いその場へ頭出しする。
             if abs(value.location.x - anchorX) <= moveSlop, let clip = store.selectedClip {
-                let seekMs = clip.clampToTrim(msAt(x: value.location.x, w: size.width, clip: clip))
-                playerManager.seek(to: seekMs)
+                finishTap(at: value.location.x, w: size.width, clip: clip)
             }
 
         default:
@@ -369,6 +316,104 @@ struct WaveformView: View {
         drag = .none
         // ロック解除。次の再描画からは選択範囲に合わせて毎回計算し直される
         lockedViewport = nil
+    }
+
+    // MARK: - Gesture handlers (Android: dragTrimHandle/dragSplitLine/dragBodyOrMoveに相当)
+
+    /// 指を置いた位置が、つまみ・分割ライン・本体のどれに最も近いかを判定する
+    /// （Android: hitTestTrim）。端 > 分割ライン > 本体、の優先順で一番近いものを掴む。
+    private func beginDrag(at startX: CGFloat, w: CGFloat, clip: VlogClip, leftX: CGFloat, rightX: CGFloat) -> ActiveDrag {
+        let dLeft  = abs(startX - leftX)
+        let dRight = abs(startX - rightX)
+        let nearestHandleDist = min(dLeft, dRight)
+
+        var nearestSplitIndex: Int? = nil
+        var nearestSplitDist: CGFloat = .greatestFiniteMagnitude
+        for (i, seg) in clip.texts.enumerated() where i > 0 {
+            let sx = xCoord(ms: seg.startMs, w: w, clip: clip)
+            let d  = abs(startX - sx)
+            if d < nearestSplitDist { nearestSplitDist = d; nearestSplitIndex = i }
+        }
+
+        if nearestHandleDist <= handleHit && nearestHandleDist <= nearestSplitDist {
+            return dLeft <= dRight ? .trimLeft(grabOffset: startX - leftX) : .trimRight(grabOffset: startX - rightX)
+        } else if let splitIdx = nearestSplitIndex, nearestSplitDist <= handleHit {
+            let splitX = xCoord(ms: clip.texts[splitIdx].startMs, w: w, clip: clip)
+            return .splitMove(index: splitIdx, grabOffset: startX - splitX)
+        } else {
+            return .pendingBody(downX: startX)
+        }
+    }
+
+    /// 端のつまみをドラッグしている間、指の位置をトリム開始・終了位置へ変換して反映する。
+    /// 左右で動かす境界・クランプ範囲が逆になるだけで、やっていることは対称
+    private func dragTrimHandle(
+        isLeft: Bool, grabOffset: CGFloat, loc: CGFloat, w: CGFloat,
+        clip: VlogClip, leftX: CGFloat, rightX: CGFloat
+    ) {
+        if isLeft {
+            let newX  = max(handleW, min(rightX - handleW, loc - grabOffset))
+            let newMs = max(0, min(clip.endMs - VlogClip.minTrimMs, msAt(x: newX, w: w, clip: clip)))
+            store.updateTrim(startMs: newMs, endMs: clip.endMs)
+            playerManager.seek(to: newMs)
+            playerManager.updateTrimBounds(startMs: newMs, endMs: clip.endMs)
+        } else {
+            let newX  = max(leftX + handleW, min(w - handleW, loc - grabOffset))
+            let newMs = max(clip.startMs + VlogClip.minTrimMs,
+                            min(clip.durationMs, msAt(x: newX, w: w, clip: clip)))
+            store.updateTrim(startMs: clip.startMs, endMs: newMs)
+            playerManager.seek(to: newMs)
+            playerManager.updateTrimBounds(startMs: clip.startMs, endMs: newMs)
+        }
+    }
+
+    /// 分割ラインをドラッグしている間、指の位置を区切り位置へ変換して反映する
+    private func dragSplitLine(index: Int, grabOffset: CGFloat, loc: CGFloat, w: CGFloat, clip: VlogClip) {
+        let newMs = msAt(x: loc - grabOffset, w: w, clip: clip)
+        if let clamped = store.moveSplit(index: index, newAtMs: newMs) {
+            playerManager.seek(to: clamped)
+        }
+    }
+
+    /// 本体を触った直後、動いたと判定できたら従来通りなぞって頭出し（スクラブ）へ切り替える
+    /// （Android: dragBodyOrMove）。動かないまま一定時間経過した場合はschedulePendingBodyTimeout
+    /// 側で.movingTrimへ切り替える
+    private func dragPendingBody(downX: CGFloat, value: DragGesture.Value, w: CGFloat, clip: VlogClip) {
+        let movedX = abs(value.location.x - downX)
+        let movedY = abs(value.translation.height)
+        guard movedX > moveSlop || movedY > moveSlop else { return }
+        pendingBodyTask?.cancel(); pendingBodyTask = nil
+        let wasPlaying = playerManager.isPlaying
+        if wasPlaying { playerManager.pause() }
+        drag = .seeking(wasPlaying: wasPlaying)
+        dragSeek(loc: value.location.x, w: w, clip: clip)
+    }
+
+    /// 波形本体をなぞって頭出し（スクラブ）している間、指の位置へ再生位置を追従させる
+    private func dragSeek(loc: CGFloat, w: CGFloat, clip: VlogClip) {
+        let seekMs = clip.clampToTrim(msAt(x: loc, w: w, clip: clip))
+        playerManager.seek(to: seekMs)
+    }
+
+    /// 長押しで区間ごと移動している間、指の移動量をms換算してトリム範囲全体をずらす
+    private func dragMoveTrim(originalStart: Int64, anchorX: CGFloat, loc: CGFloat, w: CGFloat, clip: VlogClip) {
+        let pxPerMs = geometry(w: w, viewport: effectiveViewport(clip: clip)).pxPerMs
+        guard pxPerMs > 0 else { return }
+        let deltaMs = Int64((loc - anchorX) / pxPerMs)
+        if let result = store.moveTrim(targetStartMs: originalStart + deltaMs) {
+            playerManager.updateTrimBounds(startMs: result.startMs, endMs: result.endMs)
+            // clip.clampToTrimは使わない：clipはmoveTrim前の古いstart/endMsのままで、
+            // resultが今回動かした後の新しい範囲。ここは必ずresultでクランプする
+            let seekMs = max(result.startMs, min(result.endMs, msAt(x: loc, w: w, clip: clip)))
+            playerManager.seek(to: seekMs)
+        }
+    }
+
+    /// 動かさずに指を離した＝タップとして扱い、その場へ頭出しする
+    /// （onDragEndの.pendingBody/.splitMove/.movingTrimの3分岐が共有する処理）
+    private func finishTap(at x: CGFloat, w: CGFloat, clip: VlogClip) {
+        let seekMs = clip.clampToTrim(msAt(x: x, w: w, clip: clip))
+        playerManager.seek(to: seekMs)
     }
 
     /// 動かさず[longPressSeconds]経過したら「区間ごと移動」へ切り替える（Android: dragBodyOrMove）
