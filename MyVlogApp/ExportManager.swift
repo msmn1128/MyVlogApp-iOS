@@ -79,29 +79,9 @@ class ExportManager: ObservableObject {
     private func runExport(clips: [VlogClip], timelineMuted: Bool, includeTitle: Bool) async {
         var tempFiles: [URL] = []
         do {
-            var clipURLs: [URL] = []
-            if includeTitle {
-                update("タイトルを作成中...")
-                var titleURL = try await createTitleCard(clips: clips)
-                tempFiles.append(titleURL)
-                if !timelineMuted {
-                    let withSfx = try await addTitleSfx(to: titleURL)
-                    tempFiles.append(withSfx)
-                    titleURL = withSfx
-                }
-                clipURLs.append(titleURL)
-                guard !Task.isCancelled else { throw CancellationError() }
-            }
-
-            let progressDenominator = Double(clips.count + (includeTitle ? 2 : 1))
-            for (i, clip) in clips.enumerated() {
-                update("クリップ \(i + 1)/\(clips.count) を処理中...")
-                let url = try await processClip(clip, silent: clip.isSilentInExport(timelineMuted: timelineMuted))
-                clipURLs.append(url)
-                tempFiles.append(url)
-                progress = Double(i + 1) / progressDenominator
-                guard !Task.isCancelled else { throw CancellationError() }
-            }
+            let clipURLs = try await buildClipURLs(
+                clips: clips, timelineMuted: timelineMuted, includeTitle: includeTitle, tempFiles: &tempFiles
+            )
 
             update("結合中...")
             let merged = try await concatenate(urls: clipURLs)
@@ -129,6 +109,38 @@ class ExportManager: ObservableObject {
         endBackgroundTask()
     }
 
+    /// タイトルカード生成〜各クリップの処理までを1本にまとめたもの（runExportから抽出）。
+    /// 作った一時ファイルは呼び出し元のtempFilesへ積んでいき、runExport側で
+    /// 成功・失敗どちらの経路でも最後にまとめて削除する
+    private func buildClipURLs(
+        clips: [VlogClip], timelineMuted: Bool, includeTitle: Bool, tempFiles: inout [URL]
+    ) async throws -> [URL] {
+        var clipURLs: [URL] = []
+        if includeTitle {
+            update("タイトルを作成中...")
+            var titleURL = try await createTitleCard(clips: clips)
+            tempFiles.append(titleURL)
+            if !timelineMuted {
+                let withSfx = try await addTitleSfx(to: titleURL)
+                tempFiles.append(withSfx)
+                titleURL = withSfx
+            }
+            clipURLs.append(titleURL)
+            guard !Task.isCancelled else { throw CancellationError() }
+        }
+
+        let progressDenominator = Double(clips.count + (includeTitle ? 2 : 1))
+        for (i, clip) in clips.enumerated() {
+            update("クリップ \(i + 1)/\(clips.count) を処理中...")
+            let url = try await processClip(clip, silent: clip.isSilentInExport(timelineMuted: timelineMuted))
+            clipURLs.append(url)
+            tempFiles.append(url)
+            progress = Double(i + 1) / progressDenominator
+            guard !Task.isCancelled else { throw CancellationError() }
+        }
+        return clipURLs
+    }
+
     // MARK: - Title card (AVAssetWriter, 2s black + text)
 
     private func createTitleCard(clips: [VlogClip]) async throws -> URL {
@@ -138,20 +150,11 @@ class ExportManager: ObservableObject {
         let totalFrames = Int(VlogLayout.titleCardDuration * Double(fps))  // 60 frames
 
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
-        let settings: [String: Any] = [
-            AVVideoCodecKey:  AVVideoCodecType.h264,
-            AVVideoWidthKey:  size.width,
-            AVVideoHeightKey: size.height
-        ]
-        let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: Self.h264Settings(canvas: size))
         input.expectsMediaDataInRealTime = false
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(
             assetWriterInput: input,
-            sourcePixelBufferAttributes: [
-                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-                kCVPixelBufferWidthKey as String:  size.width,
-                kCVPixelBufferHeightKey as String: size.height
-            ]
+            sourcePixelBufferAttributes: Self.pixelBufferAttributes(canvas: size)
         )
         writer.add(input)
         writer.startWriting()
@@ -250,34 +253,10 @@ class ExportManager: ObservableObject {
         clip: VlogClip, asset: AVAsset, sourceTrack: AVAssetTrack, canvas: CGSize, trimRange: CMTimeRange
     ) async throws -> URL {
         let outURL = tempURL("clipvideo_\(clip.id.uuidString)")
-        let assetDuration = try await asset.load(.duration)
-        let videoComp = try await buildPlainVideoComposition(sourceTrack: sourceTrack, canvas: canvas, coverage: assetDuration)
-
-        let reader = try AVAssetReader(asset: asset)
-        reader.timeRange = trimRange
-        let readerOutput = AVAssetReaderVideoCompositionOutput(
-            videoTracks: [sourceTrack],
-            videoSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+        let (reader, readerOutput) = try await makeClipReader(
+            asset: asset, sourceTrack: sourceTrack, canvas: canvas, trimRange: trimRange
         )
-        readerOutput.videoComposition = videoComp
-        guard reader.canAdd(readerOutput) else { throw ExportError.sessionCreationFailed }
-        reader.add(readerOutput)
-
-        let writer = try AVAssetWriter(outputURL: outURL, fileType: .mov)
-        let writerInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
-            AVVideoCodecKey:  AVVideoCodecType.h264,
-            AVVideoWidthKey:  Int(canvas.width),
-            AVVideoHeightKey: Int(canvas.height)
-        ])
-        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
-            assetWriterInput: writerInput,
-            sourcePixelBufferAttributes: [
-                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-                kCVPixelBufferWidthKey as String:  Int(canvas.width),
-                kCVPixelBufferHeightKey as String: Int(canvas.height)
-            ]
-        )
-        writer.add(writerInput)
+        let (writer, writerInput, adaptor) = try makeClipWriter(to: outURL, canvas: canvas)
 
         guard reader.startReading() else { throw reader.error ?? ExportError.sessionCreationFailed }
         writer.startWriting()
@@ -306,6 +285,58 @@ class ExportManager: ObservableObject {
         await writer.finishWriting()
         if let err = writer.error { throw err }
         return outURL
+    }
+
+    /// renderClipVideoWithTextの読み取り側セットアップ（AVAssetReader + スケール・
+    /// パディング変換ずみのvideoCompositionを付けたAVAssetReaderVideoCompositionOutput）
+    private func makeClipReader(
+        asset: AVAsset, sourceTrack: AVAssetTrack, canvas: CGSize, trimRange: CMTimeRange
+    ) async throws -> (AVAssetReader, AVAssetReaderVideoCompositionOutput) {
+        let assetDuration = try await asset.load(.duration)
+        let videoComp = try await buildPlainVideoComposition(sourceTrack: sourceTrack, canvas: canvas, coverage: assetDuration)
+
+        let reader = try AVAssetReader(asset: asset)
+        reader.timeRange = trimRange
+        let readerOutput = AVAssetReaderVideoCompositionOutput(
+            videoTracks: [sourceTrack],
+            videoSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+        )
+        readerOutput.videoComposition = videoComp
+        guard reader.canAdd(readerOutput) else { throw ExportError.sessionCreationFailed }
+        reader.add(readerOutput)
+        return (reader, readerOutput)
+    }
+
+    /// renderClipVideoWithTextの書き出し側セットアップ（AVAssetWriter + Input + Adaptor）
+    private func makeClipWriter(
+        to url: URL, canvas: CGSize
+    ) throws -> (AVAssetWriter, AVAssetWriterInput, AVAssetWriterInputPixelBufferAdaptor) {
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let writerInput = AVAssetWriterInput(mediaType: .video, outputSettings: Self.h264Settings(canvas: canvas))
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: writerInput,
+            sourcePixelBufferAttributes: Self.pixelBufferAttributes(canvas: canvas)
+        )
+        writer.add(writerInput)
+        return (writer, writerInput, adaptor)
+    }
+
+    /// createTitleCard/makeClipWriterで共通のAVAssetWriterInput設定
+    private static func h264Settings(canvas: CGSize) -> [String: Any] {
+        [
+            AVVideoCodecKey:  AVVideoCodecType.h264,
+            AVVideoWidthKey:  Int(canvas.width),
+            AVVideoHeightKey: Int(canvas.height)
+        ]
+    }
+
+    /// createTitleCard/makeClipWriterで共通のAVAssetWriterInputPixelBufferAdaptor設定
+    private static func pixelBufferAttributes(canvas: CGSize) -> [String: Any] {
+        [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String:  Int(canvas.width),
+            kCVPixelBufferHeightKey as String: Int(canvas.height)
+        ]
     }
 
     /// スケール・パディングだけを行う素のvideoComposition（CoreAnimationToolは付けない）。
