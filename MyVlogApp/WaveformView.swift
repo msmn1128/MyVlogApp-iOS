@@ -42,7 +42,7 @@ struct WaveformView: View {
         /// 本体を触った直後：動くか、長押しタイムアウトが来るまで様子見（Android: dragBodyOrMove）
         case pendingBody(downX: CGFloat)
         case seeking(wasPlaying: Bool)
-        case movingTrim(originalStart: Int64, anchorX: CGFloat, wasPlaying: Bool)
+        case movingTrim(anchorX: CGFloat, grabOffset: CGFloat, wasPlaying: Bool)
     }
 
     private var isMovingTrim: Bool {
@@ -262,7 +262,7 @@ struct WaveformView: View {
             playerManager.beginInteractiveSeek()
             drag = beginDrag(at: value.startLocation.x, w: w, clip: clip, leftX: leftX, rightX: rightX)
             if case .pendingBody(let downX) = drag {
-                schedulePendingBodyTimeout(downX: downX)
+                schedulePendingBodyTimeout(downX: downX, w: w)
             }
         }
 
@@ -284,8 +284,8 @@ struct WaveformView: View {
         case .seeking:
             dragSeek(loc: loc, w: w, clip: clip)
 
-        case .movingTrim(let originalStart, let anchorX, _):
-            dragMoveTrim(originalStart: originalStart, anchorX: anchorX, loc: loc, w: w, clip: clip)
+        case .movingTrim(_, let grabOffset, _):
+            dragMoveTrim(grabOffset: grabOffset, loc: loc, w: w, clip: clip)
 
         case .none:
             break
@@ -317,7 +317,7 @@ struct WaveformView: View {
                 finishTap(at: value.location.x, w: size.width, clip: clip)
             }
 
-        case .movingTrim(_, let anchorX, let wasPlaying):
+        case .movingTrim(let anchorX, _, let wasPlaying):
             if wasPlaying { playerManager.play() }
             // schedulePendingBodyTimeout()が長押しタイムアウトで.movingTrimへ切り替えた後、
             // 指を動かさないまま離すと「区間移動」としては何も起きず（onDragChangeが
@@ -518,15 +518,22 @@ struct WaveformView: View {
         playerManager.seek(to: seekMs)
     }
 
-    /// 長押しで区間ごと移動している間、指の移動量をms換算してトリム範囲全体をずらす。
-    /// ビューポートをパンしても区間の幅（span）自体は変わらないので、effectiveViewportの
-    /// pxPerMsはパン前後で同じ値のまま使い続けて問題ない（パンはstart/endを同じ量だけ
-    /// ずらすだけで、表示幅は変えないため）
-    private func dragMoveTrim(originalStart: Int64, anchorX: CGFloat, loc: CGFloat, w: CGFloat, clip: VlogClip) {
-        let pxPerMs = geometry(w: w, viewport: effectiveViewport(clip: clip)).pxPerMs
-        guard pxPerMs > 0 else { return }
-        let deltaMs = Int64((loc - anchorX) / pxPerMs)
-        if let result = store.moveTrim(targetStartMs: originalStart + deltaMs) {
+    /// 長押しで区間ごと移動している間、指の位置を区間開始位置へ変換してトリム範囲全体をずらす。
+    ///
+    /// 以前は「掴んだ瞬間のstart位置＋指の移動量(px→ms換算)」という、タッチダウン時点を
+    /// 基準にした差分方式だったが、これは今のビューポート（オートスクロールでパンされ続ける）
+    /// を一切見ないため、オートスクロールが指の位置と無関係に区間を進め続けている間に
+    /// 指がわずかでも動く（実機のタッチ座標は完全静止していても微小に揺れる）と、
+    /// タッチダウン基準の差分が「ほぼ元の位置」を指してしまい、オートスクロールの
+    /// 進みを毎フレーム引き戻す→ガタつく、という不具合を起こしていた。
+    /// つまみ（dragTrimHandle）と同じ「指からのオフセット（grabOffset）＋現在のビューポート」
+    /// 方式に変えることで、オートスクロールでビューポートが動くのと歩調を合わせて
+    /// 指が動かなくても一貫した位置が出るようにする。
+    private func dragMoveTrim(grabOffset: CGFloat, loc: CGFloat, w: CGFloat, clip: VlogClip) {
+        let rawX = loc - grabOffset
+        let vp = lockedViewport ?? effectiveViewport(clip: clip)
+        let targetStart = geometry(w: w, viewport: vp).extrapolatedMs(rawX)
+        if let result = store.moveTrim(targetStartMs: targetStart) {
             // 区間の両端どちらが今のビューポート外に出てもパンできるよう、両方試す
             panViewportIfNeeded(around: result.startMs, clip: clip)
             panViewportIfNeeded(around: result.endMs, clip: clip)
@@ -553,7 +560,7 @@ struct WaveformView: View {
     }
 
     /// 動かさず[longPressSeconds]経過したら「区間ごと移動」へ切り替える（Android: dragBodyOrMove）
-    private func schedulePendingBodyTimeout(downX: CGFloat) {
+    private func schedulePendingBodyTimeout(downX: CGFloat, w: CGFloat) {
         pendingBodyTask?.cancel()
         pendingBodyTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: UInt64(longPressSeconds * 1_000_000_000))
@@ -562,7 +569,11 @@ struct WaveformView: View {
             let wasPlaying = playerManager.isPlaying
             if wasPlaying { playerManager.pause() }
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-            drag = .movingTrim(originalStart: clip.startMs, anchorX: downX, wasPlaying: wasPlaying)
+            // 区間開始位置の今の画面上のxと、実際に指を置いた位置との差をgrabOffsetとして
+            // 固定する（つまみのgrabOffsetと同じ考え方）。以後はこのオフセットと現在の
+            // 指の位置・現在のビューポートだけから区間位置を求める（dragMoveTrim参照）
+            let grabOffset = downX - xCoord(ms: clip.startMs, w: w, clip: clip)
+            drag = .movingTrim(anchorX: downX, grabOffset: grabOffset, wasPlaying: wasPlaying)
         }
     }
 
