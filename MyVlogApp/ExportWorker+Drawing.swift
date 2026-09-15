@@ -3,9 +3,9 @@ import UIKit
 
 // MARK: - ExportManager: テキスト焼き込み描画
 
-/// タイトルカード・キャプションのCGContext描画処理をまとめたもの。ExportManager本体
-/// （書き出しパイプラインの制御）から、描画の詳細を分離して見通しを良くする。
-extension ExportManager {
+/// タイトルカード・キャプションのCGContext描画処理をまとめたもの。ExportWorker本体
+/// （書き出しパイプラインの重い処理）から、描画の詳細を分離して見通しを良くする。
+extension ExportWorker {
     func renderTitleFrame(size: CGSize, frame: Int, total: Int, dateText: String) -> CVPixelBuffer? {
         var buffer: CVPixelBuffer?
         CVPixelBufferCreate(kCFAllocatorDefault, Int(size.width), Int(size.height),

@@ -5,7 +5,11 @@ import Foundation
 /// アプリバンドルから読み込み、CoreTextに登録して実際のフォント名を返す。
 /// Info.plistのUIAppFontsに頼らず、プロセス単位でその場登録する（自動生成Info.plistは
 /// 配列キーの追加がしづらいため）。
-enum VlogFonts {
+/// 定数テーブルで可変状態を持たないため、@MainActorがプロジェクト全体の既定
+/// （SWIFT_DEFAULT_ACTOR_ISOLATION）になっていても、どのactorからでも
+/// awaitなしで安全に参照できるようnonisolatedにしてある
+/// （ExportWorkerなど@MainActor以外のactorから参照するため）
+nonisolated enum VlogFonts {
     /// タイトルロゴ・ひとこと字幕用（Android: LogoTypeGothic.otf）
     static let logoTypeName: String = register(resource: "LogoTypeGothic", ext: "otf")
     /// 撮影時刻用（Android: MPLUSU-Regular.ttf）

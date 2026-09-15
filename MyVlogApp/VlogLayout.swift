@@ -1,7 +1,11 @@
 import SwiftUI
 
-/// Layout/render constants shared between preview and export
-enum VlogLayout {
+/// Layout/render constants shared between preview and export.
+/// 定数テーブルで可変状態を持たないため、@MainActorがプロジェクト全体の既定
+/// （SWIFT_DEFAULT_ACTOR_ISOLATION）になっていても、どのactorからでも
+/// awaitなしで安全に参照できるようnonisolatedにしてある
+/// （ExportWorkerなど@MainActor以外のactorから参照するため）
+nonisolated enum VlogLayout {
     static let canvasWidth:  CGFloat = 1920
     static let canvasHeight: CGFloat = 1080
     static let canvasSize: CGSize = CGSize(width: canvasWidth, height: canvasHeight)
