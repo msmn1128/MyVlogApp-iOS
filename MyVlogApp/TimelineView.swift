@@ -16,15 +16,11 @@ struct TimelineView: View {
                     .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
 
                 OperationBar()
-                    .environmentObject(store)
-                    .environmentObject(playerManager)
 
                 if !store.clips.isEmpty {
                     clipRow
 
                     WaveformView()
-                        .environmentObject(store)
-                        .environmentObject(playerManager)
                         .frame(height: 95)
                         .padding(.top, 8)
                 }

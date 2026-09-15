@@ -53,14 +53,12 @@ struct ContentView: View {
                 // （Android版ExportProgressのAnimatedVisibilityと同じ狙い）
                 if exportManager.isExporting {
                     ExportOverlayView()
-                        .environmentObject(exportManager)
                         .transition(.opacity)
                 }
 
                 // 保存/読み出しダイアログも他のオーバーレイと同じくフェードで出入りさせる
                 if showSavedProjects {
                     SavedProjectsView(onDismiss: { showSavedProjects = false })
-                        .environmentObject(store)
                         .transition(.opacity)
                 }
 
@@ -168,8 +166,6 @@ struct ContentView: View {
         // 高さ配分だけを変える（セクションの着脱はしない）。
         VStack(spacing: 10) {
             PreviewView()
-                .environmentObject(store)
-                .environmentObject(playerManager)
                 .aspectRatio(16 / 9, contentMode: .fit)
                 .frame(width: size.width)
 
@@ -178,31 +174,10 @@ struct ContentView: View {
                 showPhotoPicker:   $showPhotoPicker,
                 showFilePicker:    $showFilePicker
             )
-            .environmentObject(store)
-            .environmentObject(exportManager)
             .padding(.horizontal, 12)
 
-            // Android版の timelineWeight(0.40) : editorWeight(0.18) と同じ比率で
-            // 残り高さを配分する（キーボード非表示時の値）。
-            GeometryReader { geo in
-                let spacing: CGFloat = 10
-                let available = max(0, geo.size.height - spacing)
-                let timelineHeight = available * timelineHeightRatio
-                let editorHeight   = available * editorHeightRatio
-
-                VStack(spacing: spacing) {
-                    TimelineView()
-                        .environmentObject(store)
-                        .environmentObject(playerManager)
-                        .frame(height: timelineHeight)
-
-                    TextInputView()
-                        .environmentObject(store)
-                        .environmentObject(playerManager)
-                        .frame(height: editorHeight)
-                }
+            timelineAndEditor()
                 .padding(.horizontal, 12)
-            }
         }
         .padding(.vertical, 10)
     }
@@ -215,12 +190,29 @@ struct ContentView: View {
     }
     private var editorHeightRatio: CGFloat { 1 - timelineHeightRatio }
 
+    /// タイムライン＋ひとこと欄。縦画面・横画面どちらでも同じ内容・比率なので共通化してある
+    /// （末尾の左右paddingだけ呼び出し側で変える）。
+    /// Android版の timelineWeight(0.40) : editorWeight(0.18) と同じ比率で
+    /// 残り高さを配分する（キーボード非表示時の値）。
+    private func timelineAndEditor() -> some View {
+        GeometryReader { geo in
+            let spacing: CGFloat = 10
+            let available = max(0, geo.size.height - spacing)
+
+            VStack(spacing: spacing) {
+                TimelineView()
+                    .frame(height: available * timelineHeightRatio)
+
+                TextInputView()
+                    .frame(height: available * editorHeightRatio)
+            }
+        }
+    }
+
     private func landscapeLayout(size: CGSize) -> some View {
         HStack(spacing: 10) {
             VStack(spacing: 10) {
                 PreviewView()
-                    .environmentObject(store)
-                    .environmentObject(playerManager)
                     .aspectRatio(16 / 9, contentMode: .fit)
                     .frame(maxWidth: size.width * 0.5)
 
@@ -229,32 +221,15 @@ struct ContentView: View {
                     showPhotoPicker:   $showPhotoPicker,
                     showFilePicker:    $showFilePicker
                 )
-                .environmentObject(store)
-                .environmentObject(exportManager)
 
                 Spacer()
             }
             .padding(.leading, 12)
             .frame(width: size.width * 0.5)
 
-            GeometryReader { geo in
-                let spacing: CGFloat = 10
-                let available = max(0, geo.size.height - spacing)
-
-                VStack(spacing: spacing) {
-                    TimelineView()
-                        .environmentObject(store)
-                        .environmentObject(playerManager)
-                        .frame(height: available * timelineHeightRatio)
-
-                    TextInputView()
-                        .environmentObject(store)
-                        .environmentObject(playerManager)
-                        .frame(height: available * editorHeightRatio)
-                }
-            }
-            .padding(.trailing, 12)
-            .frame(width: size.width * 0.5)
+            timelineAndEditor()
+                .padding(.trailing, 12)
+                .frame(width: size.width * 0.5)
         }
         .padding(.vertical, 10)
     }
