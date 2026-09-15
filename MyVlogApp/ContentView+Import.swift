@@ -45,22 +45,14 @@ extension ContentView {
         guard durationMs > 0 else { return nil }
 
         let creationDate = asset.creationDate ?? Date()
-        let (time, date) = formatDate(creationDate)
+        let (time, date) = Formatters.clipTimeAndDate(creationDate)
 
-        return VlogClip(
-            id:               UUID(),
-            assetIdentifier:  identifier,
-            fileURL:          nil,
-            relativeFilePath: nil,
-            timeText:         time,
-            dateText:         date,
-            durationMs:       durationMs,
-            width:            max(1, asset.pixelWidth),
-            height:           max(1, asset.pixelHeight),
-            texts:            [TextSegment()],
-            startMs:          0,
-            endMs:            durationMs,
-            shotAtMillis:     Int64(creationDate.timeIntervalSince1970 * 1000)
+        return VlogClip.imported(
+            assetIdentifier: identifier,
+            timeText: time, dateText: date,
+            durationMs: durationMs,
+            width: asset.pixelWidth, height: asset.pixelHeight,
+            shotAt: creationDate
         )
     }
 
@@ -157,22 +149,14 @@ extension ContentView {
         let fileDate = (attrs?[.creationDate] as? Date) ?? Date()
         let metadata = (try? await metaTask) ?? []
         let actualDate = extractDateFromMetadata(metadata: metadata, fallbackDate: fileDate)
-        let (time, dateStr) = formatDate(actualDate)
+        let (time, dateStr) = Formatters.clipTimeAndDate(actualDate)
 
-        return VlogClip(
-            id:               UUID(),
-            assetIdentifier:  nil,
-            fileURL:          dest,
-            relativeFilePath: fileName,
-            timeText:         time,
-            dateText:         dateStr,
-            durationMs:       durationMs,
-            width:            max(1, w),
-            height:           max(1, h),
-            texts:            [TextSegment()],
-            startMs:          0,
-            endMs:            durationMs,
-            shotAtMillis:     Int64(actualDate.timeIntervalSince1970 * 1000)
+        return VlogClip.imported(
+            fileURL: dest, relativeFilePath: fileName,
+            timeText: time, dateText: dateStr,
+            durationMs: durationMs,
+            width: w, height: h,
+            shotAt: actualDate
         )
     }
 
@@ -220,9 +204,5 @@ extension ContentView {
             if let d = df.date(from: str) { return d }
         }
         return nil
-    }
-
-    private func formatDate(_ date: Date) -> (String, String) {
-        Formatters.clipTimeAndDate(date)
     }
 }

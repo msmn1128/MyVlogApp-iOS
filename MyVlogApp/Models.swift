@@ -111,6 +111,37 @@ struct VlogClip: Identifiable, Codable, Equatable {
     static let minTrimMs: Int64 = 300
     static let splitMinDistanceMs: Int64 = 400
 
+    /// インポート直後の初期状態（全区間選択・ひとこと1つ）でクリップを作る。
+    /// フォトライブラリ由来（assetIdentifier）とファイル由来（fileURL/relativeFilePath）で
+    /// 共通していた組み立て末尾を1箇所にまとめた（ContentView+Import.swift）
+    static func imported(
+        assetIdentifier: String? = nil,
+        fileURL: URL? = nil,
+        relativeFilePath: String? = nil,
+        timeText: String,
+        dateText: String,
+        durationMs: Int64,
+        width: Int,
+        height: Int,
+        shotAt: Date
+    ) -> VlogClip {
+        VlogClip(
+            id:               UUID(),
+            assetIdentifier:  assetIdentifier,
+            fileURL:          fileURL,
+            relativeFilePath: relativeFilePath,
+            timeText:         timeText,
+            dateText:         dateText,
+            durationMs:       durationMs,
+            width:            max(1, width),
+            height:           max(1, height),
+            texts:            [TextSegment()],
+            startMs:          0,
+            endMs:            durationMs,
+            shotAtMillis:     Int64(shotAt.timeIntervalSince1970 * 1000)
+        )
+    }
+
     var trimmedDurationMs: Int64 { max(0, endMs - startMs) }
     var splitPoints: [Int64] { texts.dropFirst().map { $0.startMs } }
 
