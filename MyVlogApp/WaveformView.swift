@@ -23,6 +23,16 @@ struct WaveformView: View {
     // ドラッグ終了時（isDragIdleがfalse→trueに切り替わる瞬間）だけ計算し直した
     // 新しいfitWaveformViewportへイーズさせる。
     @State private var displayViewport: WaveformViewport? = nil
+    // 指を動かさなくても、つまみ／区間ごと移動が画面端に張り付いている間は
+    // 波形が自動でスクロールし続けるようにするための状態。
+    // panViewportIfNeeded（ドラッグイベントが来た瞬間だけ反応する）とは別に、
+    // 「今どちらの端に張り付いているか」をここに持っておき、下のedgeScrollTaskが
+    // 一定間隔でそれを見て、指の動きとは無関係に少しずつビューポートと
+    // トリム値を進める
+    @State private var isPinnedAtLeftEdge  = false
+    @State private var isPinnedAtRightEdge = false
+    @State private var edgeScrollTask: Task<Void, Never>? = nil
+    private let edgeScrollZone: CGFloat = 24
 
     private enum ActiveDrag {
         case none
@@ -115,6 +125,7 @@ struct WaveformView: View {
         }
         .task(id: store.selectedClip?.id) { await loadWaveform() }
         .onChange(of: store.selectedClip?.id) { _, _ in
+            stopEdgeScrollTask()
             lockedViewport = nil
             displayViewport = nil
         }
@@ -170,7 +181,14 @@ struct WaveformView: View {
                        color: AppColors.splitLine(colorScheme))
         drawTrimHandle(ctx: ctx, x: leftX,  height: h, handleW: handleW, isLeft: true,  scale: leftHandleScale)
         drawTrimHandle(ctx: ctx, x: rightX, height: h, handleW: handleW, isLeft: false, scale: rightHandleScale)
-        drawPlayhead(ctx: ctx, geo: geo, positionMs: playerManager.currentTimeMs, clip: clip, height: h, railH: railH)
+        // トリムつまみ／区間ごと移動のドラッグ中は、プレビュー用のシークで再生位置が
+        // つまみとほぼ同じ位置になり続け、白い再生ヘッドのピンがつまみに重なって
+        // 操作の邪魔に見える（特に端でのオートスクロール中は目立つ）。ドラッグ中は
+        // 再生ヘッドの表示自体を止めて、動かしている対象（つまみ／区間全体）だけが
+        // はっきり見えるようにする
+        if !isLeftHandleActive && !isRightHandleActive && !isMovingTrim {
+            drawPlayhead(ctx: ctx, geo: geo, positionMs: playerManager.currentTimeMs, clip: clip, height: h, railH: railH)
+        }
     }
 
     // MARK: - Segment number badges
@@ -314,6 +332,7 @@ struct WaveformView: View {
             break
         }
         drag = .none
+        stopEdgeScrollTask()
         // ロック解除。次の再描画からは選択範囲に合わせて毎回計算し直される
         lockedViewport = nil
     }
@@ -368,6 +387,81 @@ struct WaveformView: View {
             store.updateTrim(startMs: clip.startMs, endMs: newMs)
             playerManager.seek(to: newMs)
             playerManager.updateTrimBounds(startMs: clip.startMs, endMs: newMs)
+        }
+        updateEdgePinState(x: rawX, w: w)
+    }
+
+    /// 指を止めたまま画面端に張り付いている間も波形が動き続けるようにする（Android版も同様）。
+    /// panViewportIfNeededは「ドラッグイベントが来た瞬間だけ」指の位置に応じて反応するため、
+    /// 指を動かさなくなるとそこで釣り合って止まってしまう。ここでは別に、いま画面端の
+    /// 判定ゾーン内にいるかどうかだけを記録し、下のedgeScrollTaskが一定間隔で
+    /// その状態を見てビューポート／トリム値を少しずつ進め続ける
+    private func updateEdgePinState(x: CGFloat, w: CGFloat) {
+        isPinnedAtLeftEdge  = x <= handleW + edgeScrollZone
+        isPinnedAtRightEdge = x >= w - handleW - edgeScrollZone
+        startEdgeScrollTaskIfNeeded()
+    }
+
+    private func startEdgeScrollTaskIfNeeded() {
+        guard edgeScrollTask == nil else { return }
+        edgeScrollTask = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 16_000_000) // 約60fps
+                guard !Task.isCancelled else { break }
+                guard isPinnedAtLeftEdge || isPinnedAtRightEdge,
+                      let clip = store.selectedClip else { continue }
+                let direction: Int64 = isPinnedAtLeftEdge ? -1 : 1
+                switch drag {
+                case .trimLeft:
+                    advanceEdgeScrollTrimHandle(isLeft: true, direction: direction, clip: clip)
+                case .trimRight:
+                    advanceEdgeScrollTrimHandle(isLeft: false, direction: direction, clip: clip)
+                case .movingTrim:
+                    advanceEdgeScrollMoveTrim(direction: direction, clip: clip)
+                default:
+                    break
+                }
+            }
+        }
+    }
+
+    private func stopEdgeScrollTask() {
+        edgeScrollTask?.cancel()
+        edgeScrollTask = nil
+        isPinnedAtLeftEdge  = false
+        isPinnedAtRightEdge = false
+    }
+
+    /// 1tickぶんの進む量。今の表示幅（ズーム倍率）の2%ぶん（60fps想定で約1.2倍速/秒）
+    /// にしてあり、どれだけズームしていても「張り付いてから追いつくまで」の体感速度が揃う
+    private func edgeScrollTickMs(clip: VlogClip) -> Int64 {
+        let vp = lockedViewport ?? effectiveViewport(clip: clip)
+        let span = max(1, vp.end - vp.start)
+        return max(1, Int64(Double(span) * 0.02))
+    }
+
+    private func advanceEdgeScrollTrimHandle(isLeft: Bool, direction: Int64, clip: VlogClip) {
+        let tickMs = edgeScrollTickMs(clip: clip)
+        if isLeft {
+            let newMs = max(0, min(clip.endMs - VlogClip.minTrimMs, clip.startMs + direction * tickMs))
+            panViewportIfNeeded(around: newMs, clip: clip)
+            store.updateTrim(startMs: newMs, endMs: clip.endMs)
+            playerManager.updateTrimBounds(startMs: newMs, endMs: clip.endMs)
+        } else {
+            let newMs = max(clip.startMs + VlogClip.minTrimMs, min(clip.durationMs, clip.endMs + direction * tickMs))
+            panViewportIfNeeded(around: newMs, clip: clip)
+            store.updateTrim(startMs: clip.startMs, endMs: newMs)
+            playerManager.updateTrimBounds(startMs: clip.startMs, endMs: newMs)
+        }
+    }
+
+    private func advanceEdgeScrollMoveTrim(direction: Int64, clip: VlogClip) {
+        let tickMs = edgeScrollTickMs(clip: clip)
+        let targetStart = clip.startMs + direction * tickMs
+        if let result = store.moveTrim(targetStartMs: targetStart) {
+            panViewportIfNeeded(around: result.startMs, clip: clip)
+            panViewportIfNeeded(around: result.endMs, clip: clip)
+            playerManager.updateTrimBounds(startMs: result.startMs, endMs: result.endMs)
         }
     }
 
@@ -441,6 +535,13 @@ struct WaveformView: View {
             // resultが今回動かした後の新しい範囲。ここは必ずresultでクランプする
             let seekMs = max(result.startMs, min(result.endMs, msAt(x: loc, w: w, clip: clip)))
             playerManager.seek(to: seekMs)
+
+            // 区間ごと移動は左右どちらの端がビューポート外に張り付くか分からないので、
+            // 実際に描画される位置（パン後のジオメトリでmsToXした位置）で両方判定する
+            let panned = geometry(w: w, viewport: lockedViewport ?? effectiveViewport(clip: clip))
+            isPinnedAtLeftEdge  = panned.msToX(result.startMs) <= handleW + edgeScrollZone
+            isPinnedAtRightEdge = panned.msToX(result.endMs)   >= w - handleW - edgeScrollZone
+            startEdgeScrollTaskIfNeeded()
         }
     }
 
