@@ -377,18 +377,29 @@ struct WaveformView: View {
         let rawX = loc - grabOffset
         panViewportIfNeeded(atRawX: rawX, w: w, clip: clip)
         let ms = msAt(x: rawX, w: w, clip: clip)
+        let newMs = clampTrimHandleMs(isLeft: isLeft, ms: ms, clip: clip)
         if isLeft {
-            let newMs = max(0, min(clip.endMs - VlogClip.minTrimMs, ms))
             store.updateTrim(startMs: newMs, endMs: clip.endMs)
             playerManager.seek(to: newMs)
             playerManager.updateTrimBounds(startMs: newMs, endMs: clip.endMs)
         } else {
-            let newMs = max(clip.startMs + VlogClip.minTrimMs, min(clip.durationMs, ms))
             store.updateTrim(startMs: clip.startMs, endMs: newMs)
             playerManager.seek(to: newMs)
             playerManager.updateTrimBounds(startMs: clip.startMs, endMs: newMs)
         }
         updateEdgePinState(x: rawX, w: w)
+    }
+
+    /// つまみ（開始/終了）を動かした先の候補[ms]を、動画の範囲・minTrimMsの制約へ
+    /// クランプする。指でドラッグしているとき（dragTrimHandle）と、端に張り付いたまま
+    /// 自動で進めるとき（advanceEdgeScrollTrimHandle）の両方から呼ぶことで、境界の扱いが
+    /// 2箇所でずれないようにする（Android版WaveformTrimmer.ktのclampHandleMsと同じ考え方）。
+    private func clampTrimHandleMs(isLeft: Bool, ms: Int64, clip: VlogClip) -> Int64 {
+        if isLeft {
+            return max(0, min(clip.endMs - VlogClip.minTrimMs, ms))
+        } else {
+            return max(clip.startMs + VlogClip.minTrimMs, min(clip.durationMs, ms))
+        }
     }
 
     /// 指を止めたまま画面端に張り付いている間も波形が動き続けるようにする（Android版も同様）。
@@ -442,14 +453,13 @@ struct WaveformView: View {
 
     private func advanceEdgeScrollTrimHandle(isLeft: Bool, direction: Int64, clip: VlogClip) {
         let tickMs = edgeScrollTickMs(clip: clip)
+        let candidateMs = (isLeft ? clip.startMs : clip.endMs) + direction * tickMs
+        let newMs = clampTrimHandleMs(isLeft: isLeft, ms: candidateMs, clip: clip)
+        panViewportIfNeeded(around: newMs, clip: clip)
         if isLeft {
-            let newMs = max(0, min(clip.endMs - VlogClip.minTrimMs, clip.startMs + direction * tickMs))
-            panViewportIfNeeded(around: newMs, clip: clip)
             store.updateTrim(startMs: newMs, endMs: clip.endMs)
             playerManager.updateTrimBounds(startMs: newMs, endMs: clip.endMs)
         } else {
-            let newMs = max(clip.startMs + VlogClip.minTrimMs, min(clip.durationMs, clip.endMs + direction * tickMs))
-            panViewportIfNeeded(around: newMs, clip: clip)
             store.updateTrim(startMs: clip.startMs, endMs: newMs)
             playerManager.updateTrimBounds(startMs: clip.startMs, endMs: newMs)
         }
