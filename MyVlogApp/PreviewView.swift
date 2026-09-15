@@ -28,6 +28,7 @@ struct PreviewView: View {
                         .scaleEffect(1.5)
                 }
             }
+            .animation(.default, value: playerManager.isLoading)
             .contentShape(Rectangle())
             .onTapGesture { playerManager.togglePlayPause() }
         }

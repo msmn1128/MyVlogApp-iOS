@@ -401,6 +401,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = MyVlog.;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photo-video";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "書き出した動画をカメラロールに保存します";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "動画を選択してVlogを編集するために写真ライブラリにアクセスします";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -436,6 +437,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = MyVlog.;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photo-video";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "書き出した動画をカメラロールに保存します";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "動画を選択してVlogを編集するために写真ライブラリにアクセスします";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;

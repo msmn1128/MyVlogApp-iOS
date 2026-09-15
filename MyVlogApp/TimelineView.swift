@@ -131,16 +131,19 @@ private struct ClipTile: View {
             )
 
             // Split badge
-            if clip.texts.count > 1 {
-                Text("1-\(clip.texts.count)")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 4).padding(.vertical, 2)
-                    .background(AppColors.primary)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                    .padding(4)
-                    .frame(width: 80, height: 90, alignment: .topTrailing)
-            }
+            // AnimatedVisibilityのように出し入れせず、常にレイアウトへ含めて
+            // 透明度だけを変える（Android: TimelineSection.ktのsegmentBadgeAlphaと同じ狙い）。
+            // 条件で丸ごと出し入れすると、分割の瞬間にバッジがパッと現れて見える。
+            Text("1-\(clip.texts.count)")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 4).padding(.vertical, 2)
+                .background(AppColors.primary)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .padding(4)
+                .frame(width: 80, height: 90, alignment: .topTrailing)
+                .opacity(clip.texts.count > 1 ? 1 : 0)
+                .animation(.default, value: clip.texts.count > 1)
         }
         .frame(width: 80, height: 90)
         .clipShape(RoundedRectangle(cornerRadius: 8))

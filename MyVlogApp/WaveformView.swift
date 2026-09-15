@@ -16,6 +16,13 @@ struct WaveformView: View {
     // 「ドラッグ中でなければ毎回computedで出し直す」方式にしている。ドラッグ中だけ
     // ここに値を入れて据え置く（掴んだ瞬間の表示から指の下の的がズレないように）。
     @State private var lockedViewport: (start: Int64, end: Int64)? = nil
+    // 描画専用のズーム範囲。指を離した瞬間のリフィットが一瞬でパッと切り替わり、
+    // 直前まで見えていた位置と無関係な場所へ枠が飛んだように見えるのを防ぐため、
+    // 実際のヒットテスト（xCoord/msAt）とは別に、描画だけこの値を滑らかに追従させる。
+    // ドラッグ中はlockedViewportと常に同値なので実質アニメーションは発生せず、
+    // ドラッグ終了時（isDragIdleがfalse→trueに切り替わる瞬間）だけ計算し直した
+    // 新しいfitWaveformViewportへイーズさせる。
+    @State private var displayViewport: (start: Int64, end: Int64)? = nil
 
     private enum ActiveDrag {
         case none
@@ -92,6 +99,18 @@ struct WaveformView: View {
                     .animation(.spring(response: 0.2, dampingFraction: 0.6), value: isLeftHandleActive)
                 HandleScaleAnimator(value: isRightHandleActive ? 1.35 : 1) { rightHandleScale = $0 }
                     .animation(.spring(response: 0.2, dampingFraction: 0.6), value: isRightHandleActive)
+
+                // 表示ズームをdisplayViewportへ滑らかに追従させる透明な橋渡し役。
+                // ドラッグ中はeffectiveViewportがlockedViewportのまま変化しないため
+                // 実質何も起きず、ドラッグ終了（isDragIdle: false→true）の瞬間だけ
+                // 新しいfitWaveformViewportへイーズする
+                if let clip = store.selectedClip {
+                    let vp = effectiveViewport(clip: clip)
+                    ViewportAnimator(start: Double(vp.start), end: Double(vp.end)) { s, e in
+                        displayViewport = (Int64(s), Int64(e))
+                    }
+                    .animation(.easeInOut(duration: 0.25), value: isDragIdle)
+                }
             }
             .contentShape(Rectangle())
             .gesture(
@@ -101,7 +120,10 @@ struct WaveformView: View {
             )
         }
         .task(id: store.selectedClip?.id) { await loadWaveform() }
-        .onChange(of: store.selectedClip?.id) { _, _ in lockedViewport = nil }
+        .onChange(of: store.selectedClip?.id) { _, _ in
+            lockedViewport = nil
+            displayViewport = nil
+        }
     }
 
     // MARK: - Coordinate helpers
@@ -121,10 +143,18 @@ struct WaveformView: View {
     }
 
     private func xCoord(ms: Int64, w: CGFloat, clip: VlogClip) -> CGFloat {
+        xCoord(ms: ms, w: w, viewport: effectiveViewport(clip: clip))
+    }
+
+    /// 描画専用：ヒットテストとは別に、displayViewportで滑らかに追従した位置を返す
+    private func displayXCoord(ms: Int64, w: CGFloat, clip: VlogClip) -> CGFloat {
+        xCoord(ms: ms, w: w, viewport: displayViewport ?? effectiveViewport(clip: clip))
+    }
+
+    private func xCoord(ms: Int64, w: CGFloat, viewport: (start: Int64, end: Int64)) -> CGFloat {
         guard w > 2 * handleW else { return handleW }
-        let vp = effectiveViewport(clip: clip)
-        let span = CGFloat(max(1, vp.end - vp.start))
-        return handleW + (CGFloat(ms) - CGFloat(vp.start)) / span * (w - 2 * handleW)
+        let span = CGFloat(max(1, viewport.end - viewport.start))
+        return handleW + (CGFloat(ms) - CGFloat(viewport.start)) / span * (w - 2 * handleW)
     }
 
     private func msAt(x: CGFloat, w: CGFloat, clip: VlogClip) -> Int64 {
@@ -173,24 +203,35 @@ struct WaveformView: View {
         guard let clip = store.selectedClip else { return }
         let w   = size.width
         let h   = size.height
-        let leftX  = xCoord(ms: clip.startMs, w: w, clip: clip)
-        let rightX = xCoord(ms: clip.endMs, w: w, clip: clip)
+        let leftX  = displayXCoord(ms: clip.startMs, w: w, clip: clip)
+        let rightX = displayXCoord(ms: clip.endMs, w: w, clip: clip)
 
-        // ── Waveform bars (fill the time-axis region only) ──
-        let bins     = waveform.isEmpty ? Array(repeating: Float(0.08), count: 240) : waveform
-        let axisW    = w - 2 * handleW
-        let barW     = axisW / CGFloat(bins.count)
-        let midY     = h / 2
-        let maxAmp   = (h - railH * 2 - 2) / 2
+        // ── Waveform bars ──
+        // 各バーは「クリップ全体」を均等に分けた時間幅を受け持つ。以前はこの時間幅を
+        // 無視してキャンバス全幅へ均等に敷き詰めていたため、つまみ（枠）だけが
+        // ズーム後の位置へ移動する一方で波形の絵そのものは動かず、「枠が波形と無関係な
+        // 場所へ飛んだ」ように見えていた。ここをAndroid版drawWaveformBars/TrackMetrics.msToXと
+        // 同じ考え方に直し、各バーの中心時刻をdisplayXCoordでズーム後の位置へ変換して描く
+        // （ズーム範囲外のバーは間引く）ことで、つまみだけでなく波形の絵自体がズームするようにする
+        let bins   = waveform.isEmpty ? Array(repeating: Float(0.08), count: 240) : waveform
+        let axisW  = w - 2 * handleW
+        let midY   = h / 2
+        let maxAmp = (h - railH * 2 - 2) / 2
+        let vp     = displayViewport ?? effectiveViewport(clip: clip)
+        let vpSpan = CGFloat(max(1, vp.end - vp.start))
+        let pxPerMs   = axisW / vpSpan
+        let bucketMs  = CGFloat(max(1, clip.durationMs)) / CGFloat(bins.count)
+        let barW      = max(1, bucketMs * pxPerMs * 0.68)
 
         for (i, amp) in bins.enumerated() {
-            let x          = handleW + CGFloat(i) * barW
-            let barCenter  = x + barW / 2
+            let bucketCenterMs = Int64((CGFloat(i) + 0.5) * bucketMs)
+            let barCenter = displayXCoord(ms: bucketCenterMs, w: w, clip: clip)
+            guard barCenter >= handleW - barW && barCenter <= w - handleW + barW else { continue }
             let amplitude  = CGFloat(amp) * maxAmp
-            let barRect    = CGRect(x: x + 0.5, y: midY - amplitude,
-                                    width: max(1, barW - 1), height: amplitude * 2)
+            let barRect    = CGRect(x: barCenter - barW / 2, y: midY - amplitude,
+                                    width: barW, height: amplitude * 2)
             let inRange    = barCenter >= leftX && barCenter <= rightX
-            ctx.fill(Path(barRect),
+            ctx.fill(Path(roundedRect: barRect, cornerRadius: barW / 2),
                      with: .color(inRange ? AppColors.waveformFill : AppColors.waveformDim))
         }
 
@@ -201,10 +242,11 @@ struct WaveformView: View {
         ctx.fill(Path(CGRect(x: leftX, y: h - activeRailH, width: trimW, height: activeRailH)), with: .color(AppColors.primary))
 
         // ── Split lines ──
+        // Android版drawSegmentSplitsはトリム範囲外の区切りも（ビューポート内である限り）
+        // そのまま描く。トリムを動かせばまた見える位置なので隠す理由がない
         let splitColor = AppColors.splitLine(colorScheme)
         for splitMs in clip.splitPoints {
-            let sx = xCoord(ms: splitMs, w: w, clip: clip)
-            guard sx > leftX && sx < rightX else { continue }
+            let sx = displayXCoord(ms: splitMs, w: w, clip: clip)
             var path = Path()
             path.move(to: CGPoint(x: sx, y: railH + 1))
             path.addLine(to: CGPoint(x: sx, y: h - railH - 1))
@@ -216,15 +258,18 @@ struct WaveformView: View {
         drawHandle(ctx: ctx, x: rightX, h: h, isLeft: false, scale: rightHandleScale)
 
         // ── Playhead ──
-        let posMs   = playerManager.currentTimeMs
-        let clamped = max(clip.startMs, min(clip.endMs, posMs))
-        let playX   = xCoord(ms: clamped, w: w, clip: clip)
-        var headPath = Path()
-        headPath.move(to: CGPoint(x: playX, y: railH + 1))
-        headPath.addLine(to: CGPoint(x: playX, y: h - railH - 1))
-        ctx.stroke(headPath, with: .color(.white), lineWidth: 2)
-        ctx.fill(Path(ellipseIn: CGRect(x: playX - 5, y: railH, width: 10, height: 10)),
-                 with: .color(.white))
+        // Android版と同じく、再生位置が今のビューポート外／トリム範囲外なら
+        // 頭出し位置へクランプして描くのではなく、そもそも描かない
+        let posMs = playerManager.currentTimeMs
+        if posMs >= vp.start && posMs <= vp.end && posMs >= clip.startMs && posMs <= clip.endMs {
+            let playX = displayXCoord(ms: posMs, w: w, clip: clip)
+            var headPath = Path()
+            headPath.move(to: CGPoint(x: playX, y: railH + 1))
+            headPath.addLine(to: CGPoint(x: playX, y: h - railH - 1))
+            ctx.stroke(headPath, with: .color(.white), lineWidth: 2)
+            ctx.fill(Path(ellipseIn: CGRect(x: playX - 5, y: railH, width: 10, height: 10)),
+                     with: .color(.white))
+        }
     }
 
     private func drawHandle(ctx: GraphicsContext, x: CGFloat, h: CGFloat, isLeft: Bool, scale: CGFloat) {
@@ -246,31 +291,53 @@ struct WaveformView: View {
     // MARK: - Segment number badges
 
     private func badgesOverlay(clip: VlogClip, size: CGSize) -> some View {
-        let dur   = CGFloat(max(1, clip.durationMs))
         let w     = size.width
         let splitColor = AppColors.splitLine(colorScheme)
+        let lx    = displayXCoord(ms: clip.startMs, w: w, clip: clip)
+
+        // Android版も「動画は切っていないので、ひとことの切れ目は自分で描かないと
+        // 分からない」という理由でtexts.size > 1のときしかバッジ自体を出さない
+        // （drawWaveformTrimmer内の `if (texts.size > 1) drawSegmentSplits(...)`）。
+        // ここが抜けていたため、区切りが1つも無いクリップにまで「1」バッジが
+        // 出てしまっていた。
+        //
+        // 以前はsplitPoints（2番目以降の区切り）しか見ておらず「1」バッジが出なかった
+        // うえ、トリムで頭を落として表示されなくなった区間の番号まで出てしまっていた。
+        // texts全体を見て、トリム開始位置より手前の区間は番号を出さず、いま表示中の
+        // 区間の番号は実際の区切り位置ではなくトリム開始位置（lx）に追従させることで、
+        // トリムを動かしても左端に張り付いたままにならないようにする
+        let firstVisibleIndex = max(0, clip.texts.lastIndex { $0.startMs <= clip.startMs } ?? 0)
 
         return ZStack(alignment: .topLeading) {
-            ForEach(Array(clip.splitPoints.enumerated()), id: \.offset) { idx, splitMs in
-                let sx  = xCoord(ms: splitMs, w: w, clip: clip)
-                let lx  = xCoord(ms: clip.startMs, w: w, clip: clip)
-                let rx  = xCoord(ms: clip.endMs, w: w, clip: clip)
-                if sx > lx && sx < rx {
-                    // バッジ自体には触らせない（表示専用）。以前はここに独自の
-                    // onTapGestureを付けていたが、親ZStackのDragGesture(minimumDistance: 0)と
-                    // 同じ領域に別のジェスチャー認識器が重なることでSwiftUI側の判定が乱れ、
-                    // 分割マーカーがある間はトリム範囲のタップがまるごと効かなくなる
-                    // 不具合の原因になっていた。区切り付近のタップは親のDragGestureの
-                    // ヒットテスト（onDragChangeのnearestSplitDist判定）で既に拾えるため、
-                    // バッジ側に別ジェスチャーを持たせる必要はない。
-                    Text("\(idx + 2)")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 4).padding(.vertical, 2)
-                        .background(splitColor)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                        .position(x: sx, y: size.height * 0.14)
-                        .allowsHitTesting(false)
+            if clip.texts.count > 1 {
+                ForEach(Array(clip.texts.enumerated()), id: \.offset) { index, segment in
+                    if index >= firstVisibleIndex {
+                        let sx = displayXCoord(ms: segment.startMs, w: w, clip: clip)
+                        let anchorX = index == firstVisibleIndex ? lx : sx + 3
+                        // バッジ自体には触らせない（表示専用）。以前はここに独自の
+                        // onTapGestureを付けていたが、親ZStackのDragGesture(minimumDistance: 0)と
+                        // 同じ領域に別のジェスチャー認識器が重なることでSwiftUI側の判定が乱れ、
+                        // 分割マーカーがある間はトリム範囲のタップがまるごと効かなくなる
+                        // 不具合の原因になっていた。区切り付近のタップは親のDragGestureの
+                        // ヒットテスト（onDragChangeのnearestSplitDist判定）で既に拾えるため、
+                        // バッジ側に別ジェスチャーを持たせる必要はない。
+                        //
+                        // .offset(x:)は使わない。このZStackはalignment: .topLeadingだが、
+                        // 小さい固有サイズのビューに.offset()を使うと、期待通り左上を
+                        // 基準に動いてくれず中央寄りの位置にずれる現象を確認した。
+                        // .position()は親の座標系の絶対位置を直接指定するため、
+                        // コンテナのalignmentに影響されず確実に狙った位置に置ける
+                        // （分割マーカーの再生ヘッド等、元々あったコードも.position()を
+                        // 使っていた）。
+                        Text("\(index + 1)")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 4).padding(.vertical, 2)
+                            .background(splitColor)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .position(x: min(max(anchorX, 0), w - 10) + 10, y: 10)
+                            .allowsHitTesting(false)
+                    }
                 }
             }
         }
@@ -465,5 +532,25 @@ private struct HandleScaleAnimator: View, Animatable {
         Color.clear
             .onAppear { onChange(value) }
             .onChange(of: value) { _, newValue in onChange(newValue) }
+    }
+}
+
+/// HandleScaleAnimatorと同じ橋渡し手法で、波形の表示ズーム範囲(start/end)を
+/// AnimatablePairとして滑らかに追従させる
+private struct ViewportAnimator: View, Animatable {
+    var start: Double
+    var end:   Double
+    let onChange: (Double, Double) -> Void
+
+    var animatableData: AnimatablePair<Double, Double> {
+        get { AnimatablePair(start, end) }
+        set { start = newValue.first; end = newValue.second }
+    }
+
+    var body: some View {
+        Color.clear
+            .onAppear { onChange(start, end) }
+            .onChange(of: start) { _, _ in onChange(start, end) }
+            .onChange(of: end)   { _, _ in onChange(start, end) }
     }
 }

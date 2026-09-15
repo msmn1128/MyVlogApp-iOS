@@ -19,16 +19,14 @@ struct TextInputView: View {
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
                     if let clip = store.selectedClip, clip.texts.count > 1 {
-                        Text("／\(clip.texts.count) 区間目を編集中")
-                            .font(.system(size: 11))
-                            .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
-                    }
-                    if let clip = store.selectedClip, clip.texts.count > 1 {
                         Text("\(segmentIndex + 1)")
                             .font(.system(size: 9, weight: .bold))
                             .foregroundStyle(AppColors.onSplitLine(colorScheme))
                             .padding(.horizontal, 4).padding(.vertical, 1)
                             .background(Capsule().fill(AppColors.splitLine(colorScheme)))
+                        Text("／\(clip.texts.count) 区間目を編集中")
+                            .font(.system(size: 11))
+                            .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
                     }
                     Spacer()
                 }

@@ -46,6 +46,7 @@ struct ContentView: View {
 
                 if isImporting {
                     ImportOverlayView(progress: importProgress, message: importMessage)
+                        .transition(.opacity)
                 }
 
                 // 書き出しの進捗オーバーレイが瞬時に出入りせず、ふわっと現れる/消えるようにする
@@ -56,18 +57,25 @@ struct ContentView: View {
                         .transition(.opacity)
                 }
 
+                // 保存/読み出しダイアログも他のオーバーレイと同じくフェードで出入りさせる
                 if showSavedProjects {
                     SavedProjectsView(onDismiss: { showSavedProjects = false })
                         .environmentObject(store)
+                        .transition(.opacity)
                 }
 
                 // 書き出しの完了・中止・失敗トーストを、通常のトースト（store）より優先して
                 // 表示する（同時に出ることは想定していないが、書き出し結果を伝える方を優先）
                 if let toast = exportManager.toastMessage ?? store.toastMessage {
                     ToastView(text: toast)
+                        .transition(.opacity)
                 }
             }
             .animation(.default, value: exportManager.isExporting)
+            .animation(.default, value: isImporting)
+            .animation(.default, value: showSavedProjects)
+            .animation(.easeInOut(duration: 0.2), value: exportManager.toastMessage)
+            .animation(.easeInOut(duration: 0.2), value: store.toastMessage)
         }
         // isLandscapeの判定は、ソフトキーボード表示中にGeometryReaderの高さが
         // 縮む影響を受けないよう、キーボード分のセーフエリアを無視した専用の
