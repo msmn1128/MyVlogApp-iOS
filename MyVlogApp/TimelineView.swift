@@ -69,6 +69,8 @@ private struct ClipTile: View {
     let clip:       VlogClip
     let isSelected: Bool
 
+    private let tileSize = CGSize(width: 80, height: 90)
+
     @State private var thumbnail: UIImage? = nil
     @Environment(\.colorScheme) var colorScheme
 
@@ -79,11 +81,11 @@ private struct ClipTile: View {
                 Image(uiImage: img)
                     .resizable()
                     .scaledToFill()
-                    .frame(width: 80, height: 90)
+                    .frame(width: tileSize.width, height: tileSize.height)
                     .clipped()
             } else {
                 AppColors.card(colorScheme)
-                    .frame(width: 80, height: 90)
+                    .frame(width: tileSize.width, height: tileSize.height)
             }
 
             // Info overlay
@@ -117,7 +119,7 @@ private struct ClipTile: View {
                 }
             }
             .padding(5)
-            .frame(width: 80, height: 90, alignment: .bottomLeading)
+            .frame(width: tileSize.width, height: tileSize.height, alignment: .bottomLeading)
             .background(
                 LinearGradient(
                     colors: [.clear, .black.opacity(0.6)],
@@ -137,11 +139,11 @@ private struct ClipTile: View {
                 .background(AppColors.primary)
                 .clipShape(RoundedRectangle(cornerRadius: 4))
                 .padding(4)
-                .frame(width: 80, height: 90, alignment: .topTrailing)
+                .frame(width: tileSize.width, height: tileSize.height, alignment: .topTrailing)
                 .opacity(clip.texts.count > 1 ? 1 : 0)
                 .animation(.default, value: clip.texts.count > 1)
         }
-        .frame(width: 80, height: 90)
+        .frame(width: tileSize.width, height: tileSize.height)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
@@ -154,35 +156,16 @@ private struct ClipTile: View {
         // （Android版ClipTileのanimateColorAsStateと同じ狙い）
         .animation(.default, value: isSelected)
         .transition(.opacity)
-        .onAppear { loadThumbnail() }
+        .task(id: clip.id) { await loadThumbnail() }
     }
 
-    private func loadThumbnail() {
-        guard thumbnail == nil else { return }
-        if let id = clip.assetIdentifier {
-            let fetchResult = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil)
-            guard let asset = fetchResult.firstObject else { return }
-            let opts = PHImageRequestOptions()
-            opts.deliveryMode = .opportunistic
-            opts.isNetworkAccessAllowed = true
-            PHImageManager.default().requestImage(
-                for: asset,
-                targetSize: CGSize(width: 160, height: 180),
-                contentMode: .aspectFill,
-                options: opts
-            ) { img, _ in
-                Task { @MainActor in thumbnail = img }
-            }
-        } else if let url = clip.resolvedFileURL {
-            Task {
-                let av  = AVURLAsset(url: url)
-                let gen = AVAssetImageGenerator(asset: av)
-                gen.appliesPreferredTrackTransform = true
-                let time = CMTime(seconds: 0.1, preferredTimescale: 600)
-                let img  = try? await gen.image(at: time).image
-                await MainActor.run { thumbnail = img.map(UIImage.init) }
-            }
-        }
+    /// PHAsset/ファイルの分岐やPHImageManagerへの直接リクエストはThumbnailLoaderへ
+    /// 集約済み（AssetLoaderと同じキャッシュ付きの設計）。ここは結果を@Stateへ
+    /// 受け取るだけの薄い呼び出しになる
+    private func loadThumbnail() async {
+        let requestSize = CGSize(width: tileSize.width * 2, height: tileSize.height * 2)
+        let img = await ThumbnailLoader.shared.thumbnail(for: clip, size: requestSize)
+        thumbnail = img
     }
 
     private func durationLabel(_ ms: Int64) -> String {
