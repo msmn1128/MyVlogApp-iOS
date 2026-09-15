@@ -31,6 +31,13 @@ struct WaveformGeometry {
         return Int64(max(0, min(CGFloat(durationMs), raw)))
     }
 
+    /// クランプなしでx→msへ線形変換する。トリムつまみ／区間ごと移動が今のビューポート端に
+    /// 達したときに「どれだけはみ出しているか」を知るために使う（xToMsと違い
+    /// 0...durationMsへもクランプしない）
+    func extrapolatedMs(_ x: CGFloat) -> Int64 {
+        Int64(CGFloat(viewport.start) + (x - left) / width * CGFloat(spanMs))
+    }
+
     /// つまみの半分ぶん内側に縮めたトラック範囲を作る（左右0%・100%でもつまみが切れないように）
     static func forWidth(_ totalWidth: CGFloat, handleW: CGFloat, viewport: WaveformViewport) -> WaveformGeometry {
         guard totalWidth > 2 * handleW else {

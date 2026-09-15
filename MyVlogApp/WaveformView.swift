@@ -252,10 +252,10 @@ struct WaveformView: View {
 
         switch drag {
         case .trimLeft(let off):
-            dragTrimHandle(isLeft: true, grabOffset: off, loc: loc, w: w, clip: clip, leftX: leftX, rightX: rightX)
+            dragTrimHandle(isLeft: true, grabOffset: off, loc: loc, w: w, clip: clip)
 
         case .trimRight(let off):
-            dragTrimHandle(isLeft: false, grabOffset: off, loc: loc, w: w, clip: clip, leftX: leftX, rightX: rightX)
+            dragTrimHandle(isLeft: false, grabOffset: off, loc: loc, w: w, clip: clip)
 
         case .splitMove(let index, let off):
             dragSplitLine(index: index, grabOffset: off, loc: loc, w: w, clip: clip)
@@ -346,24 +346,53 @@ struct WaveformView: View {
     }
 
     /// 端のつまみをドラッグしている間、指の位置をトリム開始・終了位置へ変換して反映する。
-    /// 左右で動かす境界・クランプ範囲が逆になるだけで、やっていることは対称
-    private func dragTrimHandle(
-        isLeft: Bool, grabOffset: CGFloat, loc: CGFloat, w: CGFloat,
-        clip: VlogClip, leftX: CGFloat, rightX: CGFloat
-    ) {
+    /// 左右で動かす境界・クランプ範囲が逆になるだけで、やっていることは対称。
+    ///
+    /// 以前はピクセル位置自体をキャンバス内（[handleW, w-handleW]）へ押し込めていたため、
+    /// 今ズームして見えている範囲の端でつまみが止まってしまい、それ以上トリム位置を
+    /// 動かせなかった（実際にはまだ動画の前後に伸ばせる余地があっても）。ピクセルの
+    /// クランプはやめてmsレベルのクランプだけにし、代わりにpanViewportIfNeededで
+    /// 「今ロックされているビューポートの外へ出た分だけビューポート自体をパンする」
+    /// ことで、指を動かし続ける限り波形がスクロールして追従するようにする。
+    private func dragTrimHandle(isLeft: Bool, grabOffset: CGFloat, loc: CGFloat, w: CGFloat, clip: VlogClip) {
+        let rawX = loc - grabOffset
+        panViewportIfNeeded(atRawX: rawX, w: w, clip: clip)
+        let ms = msAt(x: rawX, w: w, clip: clip)
         if isLeft {
-            let newX  = max(handleW, min(rightX - handleW, loc - grabOffset))
-            let newMs = max(0, min(clip.endMs - VlogClip.minTrimMs, msAt(x: newX, w: w, clip: clip)))
+            let newMs = max(0, min(clip.endMs - VlogClip.minTrimMs, ms))
             store.updateTrim(startMs: newMs, endMs: clip.endMs)
             playerManager.seek(to: newMs)
             playerManager.updateTrimBounds(startMs: newMs, endMs: clip.endMs)
         } else {
-            let newX  = max(leftX + handleW, min(w - handleW, loc - grabOffset))
-            let newMs = max(clip.startMs + VlogClip.minTrimMs,
-                            min(clip.durationMs, msAt(x: newX, w: w, clip: clip)))
+            let newMs = max(clip.startMs + VlogClip.minTrimMs, min(clip.durationMs, ms))
             store.updateTrim(startMs: clip.startMs, endMs: newMs)
             playerManager.seek(to: newMs)
             playerManager.updateTrimBounds(startMs: clip.startMs, endMs: newMs)
+        }
+    }
+
+    /// トリムつまみ／区間ごと移動が今ロックされているビューポートの外へ出たら、表示幅
+    /// （ズーム倍率）は変えずにビューポート自体を指の位置へ追従させてパンする
+    /// （Android版WaveformTrimmer.ktのpanViewportIfNeededと同じ考え方）。
+    /// 再フィット（fitViewport）のような再ズーム・再センタリングはしない
+    /// （＝操作中に表示が動いて指の下から的がずれる事故を再発させないため）。
+    private func panViewportIfNeeded(atRawX rawX: CGFloat, w: CGFloat, clip: VlogClip) {
+        guard let locked = lockedViewport else { return }
+        let extrapolated = geometry(w: w, viewport: locked).extrapolatedMs(rawX)
+        panViewportIfNeeded(around: max(0, min(clip.durationMs, extrapolated)), clip: clip)
+    }
+
+    /// panViewportIfNeeded(atRawX:)の共通部分。既に確定したms（区間ごと移動の
+    /// クランプ後の値など）を渡してパンさせたいときはこちらを直接使う
+    private func panViewportIfNeeded(around ms: Int64, clip: VlogClip) {
+        guard let locked = lockedViewport else { return }
+        let span = locked.end - locked.start
+        if ms < locked.start {
+            let newStart = max(0, ms)
+            lockedViewport = WaveformViewport(start: newStart, end: newStart + span)
+        } else if ms > locked.end {
+            let newEnd = min(clip.durationMs, ms)
+            lockedViewport = WaveformViewport(start: newEnd - span, end: newEnd)
         }
     }
 
@@ -395,12 +424,18 @@ struct WaveformView: View {
         playerManager.seek(to: seekMs)
     }
 
-    /// 長押しで区間ごと移動している間、指の移動量をms換算してトリム範囲全体をずらす
+    /// 長押しで区間ごと移動している間、指の移動量をms換算してトリム範囲全体をずらす。
+    /// ビューポートをパンしても区間の幅（span）自体は変わらないので、effectiveViewportの
+    /// pxPerMsはパン前後で同じ値のまま使い続けて問題ない（パンはstart/endを同じ量だけ
+    /// ずらすだけで、表示幅は変えないため）
     private func dragMoveTrim(originalStart: Int64, anchorX: CGFloat, loc: CGFloat, w: CGFloat, clip: VlogClip) {
         let pxPerMs = geometry(w: w, viewport: effectiveViewport(clip: clip)).pxPerMs
         guard pxPerMs > 0 else { return }
         let deltaMs = Int64((loc - anchorX) / pxPerMs)
         if let result = store.moveTrim(targetStartMs: originalStart + deltaMs) {
+            // 区間の両端どちらが今のビューポート外に出てもパンできるよう、両方試す
+            panViewportIfNeeded(around: result.startMs, clip: clip)
+            panViewportIfNeeded(around: result.endMs, clip: clip)
             playerManager.updateTrimBounds(startMs: result.startMs, endMs: result.endMs)
             // clip.clampToTrimは使わない：clipはmoveTrim前の古いstart/endMsのままで、
             // resultが今回動かした後の新しい範囲。ここは必ずresultでクランプする
