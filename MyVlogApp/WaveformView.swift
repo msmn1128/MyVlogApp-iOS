@@ -95,9 +95,9 @@ struct WaveformView: View {
                 }
 
                 // Canvas描画のハンドル太さをアニメーションさせるための透明な橋渡し役
-                HandleScaleAnimator(value: isLeftHandleActive ? 1.35 : 1) { leftHandleScale = $0 }
+                CanvasValueAnimator(value: isLeftHandleActive ? 1.35 : 1) { leftHandleScale = $0 }
                     .animation(.spring(response: 0.2, dampingFraction: 0.6), value: isLeftHandleActive)
-                HandleScaleAnimator(value: isRightHandleActive ? 1.35 : 1) { rightHandleScale = $0 }
+                CanvasValueAnimator(value: isRightHandleActive ? 1.35 : 1) { rightHandleScale = $0 }
                     .animation(.spring(response: 0.2, dampingFraction: 0.6), value: isRightHandleActive)
 
                 // 表示ズームをdisplayViewportへ滑らかに追従させる透明な橋渡し役。
@@ -106,8 +106,8 @@ struct WaveformView: View {
                 // 新しいfitWaveformViewportへイーズする
                 if let clip = store.selectedClip {
                     let vp = effectiveViewport(clip: clip)
-                    ViewportAnimator(start: Double(vp.start), end: Double(vp.end)) { s, e in
-                        displayViewport = (Int64(s), Int64(e))
+                    CanvasValueAnimator(value: AnimatablePair(Double(vp.start), Double(vp.end))) { pair in
+                        displayViewport = (Int64(pair.first), Int64(pair.second))
                     }
                     .animation(.easeInOut(duration: 0.25), value: isDragIdle)
                 }
@@ -514,43 +514,3 @@ struct WaveformView: View {
     }
 }
 
-/// SwiftUIのアニメーション機構（withAnimation/.animation(value:)）は通常View修飾子の
-/// パラメータを対象にするため、Canvas描画クロージャの中で直接使っている生の値は
-/// そのままでは補間されない。この透明ビューはanimatableDataとしてvalueを持たせることで
-/// SwiftUIのアニメーションエンジンに毎フレームの中間値を計算させ、onChangeで
-/// 呼び出し元へ橋渡しする（Canvasアニメーションの定番手法）。
-private struct HandleScaleAnimator: View, Animatable {
-    var value: CGFloat
-    let onChange: (CGFloat) -> Void
-
-    var animatableData: CGFloat {
-        get { value }
-        set { value = newValue }
-    }
-
-    var body: some View {
-        Color.clear
-            .onAppear { onChange(value) }
-            .onChange(of: value) { _, newValue in onChange(newValue) }
-    }
-}
-
-/// HandleScaleAnimatorと同じ橋渡し手法で、波形の表示ズーム範囲(start/end)を
-/// AnimatablePairとして滑らかに追従させる
-private struct ViewportAnimator: View, Animatable {
-    var start: Double
-    var end:   Double
-    let onChange: (Double, Double) -> Void
-
-    var animatableData: AnimatablePair<Double, Double> {
-        get { AnimatablePair(start, end) }
-        set { start = newValue.first; end = newValue.second }
-    }
-
-    var body: some View {
-        Color.clear
-            .onAppear { onChange(start, end) }
-            .onChange(of: start) { _, _ in onChange(start, end) }
-            .onChange(of: end)   { _, _ in onChange(start, end) }
-    }
-}
