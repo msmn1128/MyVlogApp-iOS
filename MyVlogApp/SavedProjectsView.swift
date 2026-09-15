@@ -177,14 +177,3 @@ private struct SavedProjectRow: View {
         Formatters.durationLabel(ms: project.totalMs)
     }
 }
-
-private extension View {
-    func tonalPill(enabled: Bool, colorScheme: ColorScheme) -> some View {
-        let onSurface = AppColors.onSurfaceVariant(colorScheme)
-        return self
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(enabled ? AppColors.onSecondaryContainer(colorScheme) : onSurface.opacity(0.38))
-            .padding(.vertical, 12)
-            .background(Capsule().fill(enabled ? AppColors.secondaryContainer(colorScheme) : onSurface.opacity(0.12)))
-    }
-}
