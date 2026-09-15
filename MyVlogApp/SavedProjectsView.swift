@@ -44,7 +44,12 @@ struct SavedProjectsView: View {
                 }
 
                 Button {
-                    if store.saveCurrentProject(name: name.isEmpty ? "無題" : name) {
+                    // 名前が空のときの既定値は「無題」ではなくAndroid版と同じ保存日時にする
+                    let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let resolvedName = trimmedName.isEmpty
+                        ? Formatters.savedAtLabel(msSinceEpoch: Int64(Date().timeIntervalSince1970 * 1000))
+                        : trimmedName
+                    if store.saveCurrentProject(name: resolvedName) {
                         name = nextDefaultName()
                     } else {
                         showLimitAlert = true
@@ -108,7 +113,7 @@ struct SavedProjectsView: View {
         .alert("上限に達しています", isPresented: $showLimitAlert) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("保存できるプロジェクトは最大20件です。古いものを削除してください。")
+            Text("保存は20件までです。不要なものを削除してください")
         }
         .alert("削除しますか", isPresented: Binding(
             get: { pendingDelete != nil },

@@ -117,7 +117,7 @@ struct OperationBar: View {
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
-        .accessibilityLabel(isNear ? "この区切りを解除" : "ここでひとことを分割")
+        .accessibilityLabel(isNear ? "この区切りを解除" : "ここでひとことを分割（動画は切りません）")
     }
 
     // MARK: - Helpers
