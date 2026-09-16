@@ -1,4 +1,5 @@
 import SwiftUI
+import Photos
 
 /// 「動画を追加」「一時保存」「書き出し」の3ボタン。Android版ActionButtonsと同じ並び・見た目
 /// （トナルの角丸ボタン2つの間に正円のアイコンボタンを挟む）。
@@ -15,7 +16,7 @@ struct ActionButtons: View {
     var body: some View {
         HStack(spacing: 8) {
             Menu {
-                Button { showPhotoPicker = true } label: {
+                Button { openPhotoPicker() } label: {
                     Label("フォトライブラリ", systemImage: "photo.on.rectangle")
                 }
                 Button { showFilePicker = true } label: {
@@ -88,6 +89,19 @@ struct ActionButtons: View {
                 }
             }
             .animation(.default, value: exportManager.isExporting)
+        }
+    }
+
+    /// フォトライブラリへの読み取り権限を先にリクエストしてからピッカーを開く。
+    /// これをしないとPhotosPickerItem.itemIdentifierがあってもPHAsset.fetchAssets(withLocalIdentifiers:)
+    /// がアプリ側で解決できず、ContentView+Import.swiftの高速パス（makeClipFromPH）が
+    /// 一切使われずに毎回フルクオリティのデータ転送（VideoTransfer）へ落ちてしまい、
+    /// 動画追加が極端に遅くなる（進捗バーもほとんど進まなくなる）原因になっていた。
+    /// 権限が既に確定済みの場合はダイアログなしで即座に返るので、通常は待たされない。
+    private func openPhotoPicker() {
+        Task {
+            _ = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
+            showPhotoPicker = true
         }
     }
 

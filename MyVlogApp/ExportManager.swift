@@ -2,7 +2,7 @@ import AVFoundation
 import Combine
 import UIKit
 import Photos
-import UserNotifications
+@preconcurrency import UserNotifications
 
 // MARK: - ExportManager
 
@@ -97,7 +97,7 @@ class ExportManager: ObservableObject {
             try await worker.saveToPhotoLibrary(url: merged, displayName: displayName)
             progress = 1.0
             update("完了")
-            let savedMessage = "ギャラリーに保存しました\n\(displayName)"
+            let savedMessage = "写真に保存しました\n\(displayName)"
             notifyCompletion(title: "書き出し完了", body: savedMessage)
             showMessage(savedMessage)
         } catch is CancellationError {

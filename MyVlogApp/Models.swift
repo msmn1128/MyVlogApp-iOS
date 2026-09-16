@@ -1,11 +1,16 @@
 import Foundation
 
-struct TextSegment: Codable, Equatable, Hashable {
+/// クリップ/ひとこと欄のデータそのもの（可変状態を持たない値型）はどのactorからも
+/// awaitなしで安全に参照できる必要があるため、プロジェクト全体の既定
+/// （SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor）から明示的に外してある
+/// （AssetLoader/ThumbnailLoader/ExportWorkerなど@MainActor以外のactorから参照するため。
+/// 詳しい経緯はFontLoader.swiftのコメントを参照）
+nonisolated struct TextSegment: Codable, Equatable, Hashable {
     var startMs: Int64 = 0
     var text: String = "ひとこと"
 }
 
-struct VlogClip: Identifiable, Codable, Equatable {
+nonisolated struct VlogClip: Identifiable, Codable, Equatable {
     var id: UUID = UUID()
     var assetIdentifier: String?    // PHAsset.localIdentifier
     var fileURL: URL?               // Legacy file:// URL for file picker videos

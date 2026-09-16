@@ -593,7 +593,7 @@ struct WaveformView: View {
         guard let clip = store.selectedClip else { waveform = []; return }
         await MainActor.run { isLoading = true; waveform = [] }
         do {
-            let asset = try await AssetLoader.shared.load(clip: clip)
+            let asset = try await AssetLoader.shared.load(clip: clip, forPreview: true)
             let data  = await WaveformExtractor.shared.extract(asset: asset, clipID: clip.id)
             await MainActor.run { waveform = data; isLoading = false }
         } catch {

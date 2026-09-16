@@ -12,18 +12,18 @@ actor ThumbnailLoader {
 
     private var cache: [UUID: UIImage] = [:]
 
-    func thumbnail(for clip: VlogClip, size: CGSize) async -> UIImage? {
+    func thumbnail(for clip: VlogClip, size: CGSize, scale: CGFloat) async -> UIImage? {
         if let cached = cache[clip.id] { return cached }
-        let image = await load(for: clip, size: size)
+        let image = await load(for: clip, size: size, scale: scale)
         if let image { cache[clip.id] = image }
         return image
     }
 
-    private func load(for clip: VlogClip, size: CGSize) async -> UIImage? {
+    private func load(for clip: VlogClip, size: CGSize, scale: CGFloat) async -> UIImage? {
         if let identifier = clip.assetIdentifier {
             return await loadFromPHAsset(identifier: identifier, size: size)
         } else if clip.resolvedFileURL != nil {
-            return await loadFromFile(clip: clip)
+            return await loadFromFile(clip: clip, size: size, scale: scale)
         }
         return nil
     }
@@ -47,10 +47,16 @@ actor ThumbnailLoader {
 
     /// ファイルインポートのクリップは、波形と同じAVAssetLoaderのキャッシュ済みアセットを
     /// 再利用する（タイルと波形で同じ動画を2重にデコードしないように）
-    private func loadFromFile(clip: VlogClip) async -> UIImage? {
-        guard let asset = try? await AssetLoader.shared.load(clip: clip) else { return nil }
+    private func loadFromFile(clip: VlogClip, size: CGSize, scale: CGFloat) async -> UIImage? {
+        guard let asset = try? await AssetLoader.shared.load(clip: clip, forPreview: true) else { return nil }
         let gen = AVAssetImageGenerator(asset: asset)
         gen.appliesPreferredTrackTransform = true
+        // maximumSizeを指定しないと4K/60p動画などでも元解像度のままデコードされ、
+        // 表示は小さなタイルなのに重いデコードコストがかかっていた。
+        // scaleは呼び出し元（MainActor）のdisplayScaleをそのまま受け取る —
+        // ThumbnailLoaderはバックグラウンドactorなので、ここでUIScreen.mainを
+        // 読みに行くと呼び出しごとにMainActorへの余計なホップが発生していた
+        gen.maximumSize = CGSize(width: size.width * scale, height: size.height * scale)
         let time = CMTime(seconds: 0.1, preferredTimescale: 600)
         guard let cgImage = try? await gen.image(at: time).image else { return nil }
         return UIImage(cgImage: cgImage)

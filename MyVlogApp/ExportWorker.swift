@@ -315,7 +315,7 @@ actor ExportWorker {
 
     // MARK: - Save to camera roll
 
-    /// ギャラリーでの表示名「Vlog_yyyy-MM-dd.mp4」を組み立てる（Android: buildDisplayNameの
+    /// 写真アプリでの表示名「Vlog_yyyy-MM-dd.mp4」を組み立てる（Android: buildDisplayNameの
     /// ベース名部分のみ移植）。Android版は同名チェックにMediaStoreの自アプリファイルを権限なしで
     /// 参照できるが、iOSで同等の重複チェックをするにはPHPhotoLibraryの読み取り権限
     /// （.addOnlyより広い権限）が追加で必要になり、書き出しのたびに権限ダイアログが増えてしまう。

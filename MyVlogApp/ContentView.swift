@@ -49,13 +49,6 @@ struct ContentView: View {
                         .transition(.opacity)
                 }
 
-                // 書き出しの進捗オーバーレイが瞬時に出入りせず、ふわっと現れる/消えるようにする
-                // （Android版ExportProgressのAnimatedVisibilityと同じ狙い）
-                if exportManager.isExporting {
-                    ExportOverlayView()
-                        .transition(.opacity)
-                }
-
                 // 保存/読み出しダイアログも他のオーバーレイと同じくフェードで出入りさせる
                 if showSavedProjects {
                     SavedProjectsView(onDismiss: { showSavedProjects = false })
@@ -143,8 +136,13 @@ struct ContentView: View {
             exportManager.startExport(clips: store.clips, timelineMuted: store.timelineMuted, includeTitle: includeTitle)
         }
         // Photo picker
+        // photoLibrary: .shared() を渡さないとPhotosPickerItem.itemIdentifierが常にnilになり、
+        // makeClipFromPH（PHAssetのメタデータだけを読む軽量パス）が一切使われず、
+        // 選んだ動画every回VideoTransfer経由でフルクオリティのデータを丸ごとコピーする
+        // 低速フォールバックに落ちてしまっていた（読み込みが極端に長くなる不具合の原因）
         .photosPicker(isPresented: $showPhotoPicker, selection: $photoItems,
-                      matching: .videos, preferredItemEncoding: .automatic)
+                      matching: .videos, preferredItemEncoding: .automatic,
+                      photoLibrary: .shared())
         .onChange(of: photoItems) { _, items in
             Task { await handlePhotosPick(items) }
         }
@@ -175,6 +173,12 @@ struct ContentView: View {
                 showFilePicker:    $showFilePicker
             )
             .padding(.horizontal, 12)
+
+            if exportManager.isExporting {
+                ExportProgressView()
+                    .padding(.horizontal, 12)
+                    .transition(.opacity)
+            }
 
             timelineAndEditor()
                 .padding(.horizontal, 12)
@@ -221,6 +225,11 @@ struct ContentView: View {
                     showPhotoPicker:   $showPhotoPicker,
                     showFilePicker:    $showFilePicker
                 )
+
+                if exportManager.isExporting {
+                    ExportProgressView()
+                        .transition(.opacity)
+                }
 
                 Spacer()
             }
@@ -280,33 +289,6 @@ struct ImportOverlayView: View {
             .padding(28)
             .background(.regularMaterial)
             .clipShape(RoundedRectangle(cornerRadius: 16))
-        }
-    }
-}
-
-// MARK: - Export overlay
-
-struct ExportOverlayView: View {
-    @EnvironmentObject var exportManager: ExportManager
-    var body: some View {
-        ZStack {
-            Color.black.opacity(0.55).ignoresSafeArea()
-            VStack(spacing: 16) {
-                ProgressView(value: exportManager.progress)
-                    .progressViewStyle(.linear).tint(AppColors.primary).frame(width: 260)
-                // 工程の切り替わり（メッセージ差し替え）もチラつかせず、文字だけフェードする
-                // （Android版ExportProgressのメッセージAnimatedContentと同じ狙い）
-                Text(exportManager.message)
-                    .foregroundStyle(.white).font(.subheadline)
-                    .contentTransition(.opacity)
-                    .animation(.default, value: exportManager.message)
-                Button("中止") { exportManager.cancel() }
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 24).padding(.vertical, 8)
-                    .background(Color.red.opacity(0.85)).clipShape(Capsule())
-            }
-            .padding(28)
-            .background(.regularMaterial).clipShape(RoundedRectangle(cornerRadius: 16))
         }
     }
 }

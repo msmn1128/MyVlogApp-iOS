@@ -39,11 +39,18 @@ class VideoPlayerManager: ObservableObject {
         player.isMuted = false
         let interval = CMTime(value: 1, timescale: 30)
         periodicObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
-            guard let self else { return }
-            guard !self.isInteractiveSeeking else { return }
-            guard time.isNumeric && time.seconds.isFinite else { return }
-            let ms = Int64(time.seconds * 1000)
-            self.currentTimeMs = ms
+            // queue: .mainで必ずメインスレッド上で呼ばれることが保証されているが、
+            // このクロージャの型はSwift 6の並行性チェック上@Sendableとして扱われるため、
+            // assumeIsolatedでMainActor隔離のプロパティへ安全に触れることを伝える
+            // （Task { @MainActor in ... }に包むと非同期になり、ドラッグ中の
+            // 上書き防止に必要な同期的な即時反映が失われてしまう）
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                guard !self.isInteractiveSeeking else { return }
+                guard time.isNumeric && time.seconds.isFinite else { return }
+                let ms = Int64(time.seconds * 1000)
+                self.currentTimeMs = ms
+            }
         }
     }
 
@@ -82,7 +89,7 @@ class VideoPlayerManager: ObservableObject {
         removeEndObserver()
 
         do {
-            let asset = try await AssetLoader.shared.load(clip: clip)
+            let asset = try await AssetLoader.shared.load(clip: clip, forPreview: true)
             guard !Task.isCancelled else { isLoading = false; return }
             let item = AVPlayerItem(asset: asset)
             player.replaceCurrentItem(with: item)

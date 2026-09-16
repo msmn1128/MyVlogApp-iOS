@@ -73,6 +73,7 @@ private struct ClipTile: View {
 
     @State private var thumbnail: UIImage? = nil
     @Environment(\.colorScheme) var colorScheme
+    @Environment(\.displayScale) private var displayScale
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
@@ -164,7 +165,7 @@ private struct ClipTile: View {
     /// 受け取るだけの薄い呼び出しになる
     private func loadThumbnail() async {
         let requestSize = CGSize(width: tileSize.width * 2, height: tileSize.height * 2)
-        let img = await ThumbnailLoader.shared.thumbnail(for: clip, size: requestSize)
+        let img = await ThumbnailLoader.shared.thumbnail(for: clip, size: requestSize, scale: displayScale)
         thumbnail = img
     }
 

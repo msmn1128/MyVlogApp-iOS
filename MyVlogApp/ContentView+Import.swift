@@ -2,6 +2,7 @@ import SwiftUI
 import PhotosUI
 import AVFoundation
 import Photos
+import UIKit
 
 // Transferable wrapper — used when PhotosPickerItem.itemIdentifier is nil
 // (limited library access). Copies the received temp file to avoid it being
@@ -20,6 +21,8 @@ private struct VideoTransfer: Transferable {
         }
     }
 }
+
+private typealias ImportedClips = [(index: Int, clip: VlogClip)]
 
 // MARK: - Import handlers（写真ピッカー・ファイルピッカーからのクリップ読み込み）
 
@@ -69,6 +72,12 @@ extension ContentView {
     /// 各ソース要素→VlogClipへの変換だけを呼び出し側から渡してもらい、進捗表示・並列読み込み・
     /// 元の並び順への復元・追加・スキップ件数メッセージ・インポート中オーバーレイの
     /// 開始/終了は共通ロジックとしてここでまとめて行う。
+    ///
+    /// ExportManagerの書き出し処理と同様、アプリがバックグラウンドへ回ってもOSが与える
+    /// 延長時間（beginBackgroundTask）で処理を継続させ、時間切れになったら明示的に
+    /// キャンセルする。以前はこれが無く、バックグラウンド遷移後30秒程度でTaskが
+    /// 強制サスペンドされ、復帰してもisImportingオーバーレイが消えないまま
+    /// 固まることがあった。
     private func importClips<Source>(
         _ sources: [Source], makeClip: @escaping (Source) async -> VlogClip?
     ) async {
@@ -78,34 +87,60 @@ extension ContentView {
         let total = sources.count
         importMessage = "動画を読み込み中 (0/\(total))..."
 
-        var loadedClips: [(index: Int, clip: VlogClip)] = []
-
-        await withTaskGroup(of: (Int, VlogClip?).self) { group in
-            for (index, source) in sources.enumerated() {
-                group.addTask {
-                    (index, await makeClip(source))
-                }
-            }
-
-            var finishedCount = 0
-            for await (idx, clip) in group {
-                finishedCount += 1
-                await MainActor.run {
-                    importProgress = Double(finishedCount) / Double(total)
-                    importMessage = "動画を読み込み中 (\(finishedCount)/\(total))..."
-                }
-                if let clip {
-                    loadedClips.append((idx, clip))
-                }
-            }
+        // importTaskはbackgroundTaskIDと同じく「先にvarで宣言してクロージャに直接
+        // キャプチャさせる」形にしてある。letで一括代入する形にすると、期限切れ
+        // ハンドラ（beginBackgroundTaskの呼び出し時点ではまだimportTaskが存在しない）
+        // から参照できず、間に参照型の箱を挟む回り道が必要になってしまう。
+        var importTask: Task<ImportedClips, Never>?
+        var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+        func endBackgroundTaskIfNeeded() {
+            guard backgroundTaskID != .invalid else { return }
+            UIApplication.shared.endBackgroundTask(backgroundTaskID)
+            backgroundTaskID = .invalid
         }
+        backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "VlogImport") {
+            importTask?.cancel()
+            endBackgroundTaskIfNeeded()
+        }
+
+        let task = Task<ImportedClips, Never> {
+            var loadedClips: ImportedClips = []
+            await withTaskGroup(of: (Int, VlogClip?).self) { group in
+                for (index, source) in sources.enumerated() {
+                    group.addTask {
+                        guard !Task.isCancelled else { return (index, nil) }
+                        return (index, await makeClip(source))
+                    }
+                }
+
+                var finishedCount = 0
+                for await (idx, clip) in group {
+                    finishedCount += 1
+                    await MainActor.run {
+                        importProgress = Double(finishedCount) / Double(total)
+                        importMessage = "動画を読み込み中 (\(finishedCount)/\(total))..."
+                    }
+                    if let clip {
+                        loadedClips.append((idx, clip))
+                    }
+                }
+            }
+            return loadedClips
+        }
+        importTask = task
+
+        var loadedClips = await task.value
+        let wasCancelled = task.isCancelled
+        endBackgroundTaskIfNeeded()
 
         loadedClips.sort { $0.index < $1.index }
         let newClips = loadedClips.map { $0.clip }
 
         if !newClips.isEmpty { store.addClips(newClips) }
         let skipped = sources.count - newClips.count
-        if skipped > 0 {
+        if wasCancelled {
+            store.showMessage("バックグラウンドで時間切れのため読み込みを中断しました")
+        } else if skipped > 0 {
             store.showMessage("\(skipped) 件の動画は長さを取得できませんでした")
         }
         try? await Task.sleep(nanoseconds: 100_000_000)
@@ -113,13 +148,39 @@ extension ContentView {
     }
 
     private func makeClipFromURL(_ url: URL, isTemporaryFile: Bool = false) async -> VlogClip? {
-        let av = AVURLAsset(url: url)
+        let fileName = UUID().uuidString + "_" + url.lastPathComponent
+        guard let docDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return nil }
+        let dest = docDir.appendingPathComponent(fileName)
 
+        // メタデータの読み込みは先にコピーを済ませてローカルの`dest`に対して行う。
+        // ファイルピッカー経由のURLはiCloud Drive/サードパーティ製プロバイダに
+        // 裏付けられていることがあり、コピー前のURLへAVURLAssetで直接
+        // duration/tracks/metadataをそれぞれ読みに行くと、プロバイダ越しの
+        // ランダムアクセス読み込みが何度も発生して非常に遅くなることがあった
+        // （Photosピッカー側のitemIdentifier不足による低速化とは別の原因）。
+        // 一度のシーケンシャルなコピーでローカルへ落としてしまえば、以降の読み込みは
+        // 常にローカルファイルへの高速アクセスになる。
+        //
+        // このコピー自体はFileManagerの同期APIなので、Swift Concurrencyの
+        // cooperative thread pool上でそのまま呼ぶとディスクI/Oの間そのスレッドを
+        // 占有してしまう（importClipsは動画ごとに並列でこの関数を呼ぶため、
+        // 選択枚数が多いとpoolの限られたスレッドを食い合って他の非同期処理まで
+        // 詰まりやすい）。GCDの別スレッドへ逃がしてpoolを塞がないようにする。
+        do {
+            try await copyOrMoveOffCooperativePool(at: url, to: dest, move: isTemporaryFile)
+        } catch {
+            return nil
+        }
+
+        let av = AVURLAsset(url: dest)
         async let durTask = av.load(.duration)
         async let tracksTask = av.load(.tracks)
         async let metaTask = av.load(.metadata)
 
-        guard let dur = try? await durTask, dur.seconds > 0, dur.seconds.isFinite else { return nil }
+        guard let dur = try? await durTask, dur.seconds > 0, dur.seconds.isFinite else {
+            try? FileManager.default.removeItem(at: dest)
+            return nil
+        }
         let durationMs = Int64(dur.seconds * 1000)
 
         // Get display size (applying rotation transform)
@@ -135,20 +196,10 @@ extension ContentView {
             }
         }
 
-        let fileName = UUID().uuidString + "_" + url.lastPathComponent
-        guard let docDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return nil }
-        let dest = docDir.appendingPathComponent(fileName)
-
-        if isTemporaryFile {
-            try? FileManager.default.moveItem(at: url, to: dest)
-        } else {
-            try? FileManager.default.copyItem(at: url, to: dest)
-        }
-
         let attrs = try? FileManager.default.attributesOfItem(atPath: dest.path)
         let fileDate = (attrs?[.creationDate] as? Date) ?? Date()
         let metadata = (try? await metaTask) ?? []
-        let actualDate = extractDateFromMetadata(metadata: metadata, fallbackDate: fileDate)
+        let actualDate = await extractDateFromMetadata(metadata: metadata, fallbackDate: fileDate)
         let (time, dateStr) = Formatters.clipTimeAndDate(actualDate)
 
         return VlogClip.imported(
@@ -160,26 +211,44 @@ extension ContentView {
         )
     }
 
-    private func extractDateFromMetadata(metadata: [AVMetadataItem], fallbackDate: Date) -> Date {
+    /// FileManagerの同期コピー/移動をGCDのグローバルキューへ逃がし、呼び出し側の
+    /// cooperative thread poolのスレッドをディスクI/Oで塞がないようにする
+    private func copyOrMoveOffCooperativePool(at src: URL, to dest: URL, move: Bool) async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                do {
+                    if move {
+                        try FileManager.default.moveItem(at: src, to: dest)
+                    } else {
+                        try FileManager.default.copyItem(at: src, to: dest)
+                    }
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    private func extractDateFromMetadata(metadata: [AVMetadataItem], fallbackDate: Date) async -> Date {
         let creationItems = AVMetadataItem.metadataItems(from: metadata, filteredByIdentifier: .commonIdentifierCreationDate)
-        if let item = creationItems.first {
-            if let dateVal = item.dateValue {
-                return dateVal
-            }
-            if let strVal = item.stringValue, let parsed = parseDateString(strVal) {
-                return parsed
-            }
+        if let item = creationItems.first, let date = await dateFromMetadataItem(item) {
+            return date
         }
         let qtItems = AVMetadataItem.metadataItems(from: metadata, filteredByIdentifier: .quickTimeMetadataCreationDate)
-        if let item = qtItems.first {
-            if let dateVal = item.dateValue {
-                return dateVal
-            }
-            if let strVal = item.stringValue, let parsed = parseDateString(strVal) {
-                return parsed
-            }
+        if let item = qtItems.first, let date = await dateFromMetadataItem(item) {
+            return date
         }
         return fallbackDate
+    }
+
+    /// dateValue/stringValueを1回のロード呼び出しでまとめて取得する
+    /// （別々にawaitすると同じitemへの往復が2回になる）
+    private func dateFromMetadataItem(_ item: AVMetadataItem) async -> Date? {
+        guard let (dateVal, strVal) = try? await item.load(.dateValue, .stringValue) else { return nil }
+        if let dateVal { return dateVal }
+        if let strVal, let parsed = parseDateString(strVal) { return parsed }
+        return nil
     }
 
     private func parseDateString(_ str: String) -> Date? {
