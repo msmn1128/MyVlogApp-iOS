@@ -71,7 +71,11 @@ struct PreviewView: View {
 
         return ZStack {
             ForEach(Array(lines.enumerated()), id: \.offset) { idx, line in
-                let y = startY + CGFloat(idx) * lineHeight + fontSize / 2
+                // 高さlineHeightのスロットに収めて中央寄せ（ExportWorker+Drawing.drawHitokotoの
+                // slotY + lineH/2 と同じ考え方）。以前はfontSize/2を使っており、
+                // 単一行のときだけたまたまキャンバス中央に一致し、書き出し側（lineHeight/2基準）
+                // との食い違い（lineGap/2ぶんのズレ）に気付きにくくなっていた。
+                let y = startY + CGFloat(idx) * lineHeight + lineHeight / 2
                 if !line.isEmpty {
                     Text(line)
                         .font(.custom(VlogFonts.logoTypeName, size: fontSize))

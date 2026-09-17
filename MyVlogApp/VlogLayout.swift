@@ -34,13 +34,21 @@ nonisolated enum VlogLayout {
     static let toolbarIconSize:   CGFloat = 20
 
     /// 「ひとこと」複数行ブロックの先頭行の上端Y（キャンバス上下中央に配置）。
-    /// PreviewView（SwiftUI描画）とExportManager（CGContext描画）の両方で使う、
+    /// PreviewView（SwiftUI描画）とExportWorker+Drawing（CGContext描画）の両方で使う、
     /// 数値としては完全に同一の計算（過去にここがズレて「プレビューと書き出しの
     /// 黒帯基準ズレ」という不具合になったことがあるため、1箇所にまとめている）。
+    ///
+    /// 各行は「高さlineHeightのスロットに収めて中央寄せ」という前提の式にしてある
+    /// （呼び出し側は各行の中心をtopY + idx*lineHeight + lineHeight/2で求めること。
+    /// PreviewView.hitokotoOverlay/ExportWorker+Drawing.drawHitokotoの両方がこの前提）。
+    /// 以前はtotalHeightから最後の行ぶんのlineGapを引いていたが、これだとブロック全体が
+    /// Android版（各行を`(idx-(n-1)/2)*lineHeight`という対称オフセットでキャンバス中央から
+    /// 配置する方式）よりlineGap/2ぶん下にズレる。lineGapを引かない（=lineHeight*lineCount）
+    /// ことで、この対称オフセット方式と数式レベルで一致する。
     static func hitokotoBlockTop(lineCount: Int, canvasHeight: CGFloat, fontSize: CGFloat, lineGap: CGFloat) -> CGFloat {
         guard lineCount > 0 else { return canvasHeight * 0.5 }
         let lineHeight = fontSize + lineGap
-        let totalHeight = lineHeight * CGFloat(lineCount) - lineGap
+        let totalHeight = lineHeight * CGFloat(lineCount)
         return canvasHeight * 0.5 - totalHeight / 2
     }
 }
