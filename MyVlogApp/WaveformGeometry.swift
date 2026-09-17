@@ -8,7 +8,7 @@ struct WaveformViewport: Equatable {
     var end:   Int64
 }
 
-/// px⇔ms変換を1か所に集約したもの（Android: WaveformTrimmer.ktのTrackMetrics相当）。
+/// px⇔ms変換を1か所に集約したもの（Android: WaveformTrimmerGestures.ktのTrackMetrics相当）。
 /// ジェスチャー処理・Canvas描画のどちらからも、同じ変換ロジックを通して座標を扱う。
 struct WaveformGeometry {
     let left:  CGFloat

@@ -19,41 +19,38 @@ class ExportManager: ObservableObject {
     private var exportTask: Task<Void, Never>?
     /// アプリがバックグラウンドへ回っても書き出しを続けるための延命申請
     /// （Android: VlogExportServiceのフォアグラウンドサービス化に相当）
-    private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+    private let backgroundTask = BackgroundTaskGuard()
     /// AVFoundationの読み書き・CGContextへの焼き込みなど重い処理だけを担当するactor。
     /// メインスレッドを塞がないよう、ExportManager（@MainActor）から切り離してある
     /// （詳しい経緯はExportWorker.swiftのコメントを参照）
     private let worker = ExportWorker()
 
-    func startExport(clips: [VlogClip], timelineMuted: Bool = false, includeTitle: Bool = true) {
+    /// @param customTitleText タイトルカードに焼き込む文言。nil/空文字なら先頭クリップの
+    ///   撮影日（VlogClip.dateText）を使う。タイトル作成ダイアログで自由入力を選んだときのみ渡る
+    ///   （Android: VlogViewModel.export の customTitleText と同じ役割）。
+    func startExport(
+        clips: [VlogClip], timelineMuted: Bool = false, includeTitle: Bool = true, customTitleText: String? = nil
+    ) {
         guard !isExporting, !clips.isEmpty else { return }
         isExporting = true
         progress    = 0
         message     = includeTitle ? "タイトルを作成中..." : "クリップを処理中..."
-        beginBackgroundTask()
-        exportTask  = Task { await runExport(clips: clips, timelineMuted: timelineMuted, includeTitle: includeTitle) }
+        backgroundTask.begin(name: "VlogExport") { [weak self] in
+            // OSに与えられた延長時間を使い切った＝ここで畳むしかない
+            self?.exportTask?.cancel()
+            self?.backgroundTask.end()
+        }
+        exportTask  = Task {
+            await runExport(
+                clips: clips, timelineMuted: timelineMuted, includeTitle: includeTitle, customTitleText: customTitleText
+            )
+        }
     }
 
     func cancel() {
         exportTask?.cancel()
         isExporting = false
-        endBackgroundTask()
-    }
-
-    // MARK: - Background execution
-
-    private func beginBackgroundTask() {
-        backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "VlogExport") { [weak self] in
-            // OSに与えられた延長時間を使い切った＝ここで畳むしかない
-            self?.exportTask?.cancel()
-            self?.endBackgroundTask()
-        }
-    }
-
-    private func endBackgroundTask() {
-        guard backgroundTaskID != .invalid else { return }
-        UIApplication.shared.endBackgroundTask(backgroundTaskID)
-        backgroundTaskID = .invalid
+        backgroundTask.end()
     }
 
     /// 完了・中止・失敗を画面上部/下部のトーストで一時的に知らせる（Android: ToastによるVlogEvent.Message相当）
@@ -80,11 +77,14 @@ class ExportManager: ObservableObject {
 
     // MARK: - Main pipeline
 
-    private func runExport(clips: [VlogClip], timelineMuted: Bool, includeTitle: Bool) async {
+    private func runExport(clips: [VlogClip], timelineMuted: Bool, includeTitle: Bool, customTitleText: String?) async {
         var tempFiles: [URL] = []
+        // includeTitleの真偽に関わらず、ファイル名は常にこの文言を基準にする
+        // （Android: VlogExporter.exportのtitleTextと同じ方針）
+        let titleText = Self.resolveTitleText(customTitleText: customTitleText, firstClipDateText: clips.first?.dateText ?? "")
         do {
             let clipURLs = try await buildClipURLs(
-                clips: clips, timelineMuted: timelineMuted, includeTitle: includeTitle, tempFiles: &tempFiles
+                clips: clips, timelineMuted: timelineMuted, includeTitle: includeTitle, titleText: titleText, tempFiles: &tempFiles
             )
 
             update("結合中...")
@@ -93,7 +93,7 @@ class ExportManager: ObservableObject {
             progress = 0.9
 
             update("保存中...")
-            let displayName = await worker.displayName(firstClipDateText: clips.first?.dateText ?? "")
+            let displayName = await worker.displayName(titleText: titleText)
             try await worker.saveToPhotoLibrary(url: merged, displayName: displayName)
             progress = 1.0
             update("完了")
@@ -110,19 +110,19 @@ class ExportManager: ObservableObject {
         }
         for url in tempFiles { try? FileManager.default.removeItem(at: url) }
         isExporting = false
-        endBackgroundTask()
+        backgroundTask.end()
     }
 
     /// タイトルカード生成〜各クリップの処理までを1本にまとめたもの（runExportから抽出）。
     /// 作った一時ファイルは呼び出し元のtempFilesへ積んでいき、runExport側で
     /// 成功・失敗どちらの経路でも最後にまとめて削除する
     private func buildClipURLs(
-        clips: [VlogClip], timelineMuted: Bool, includeTitle: Bool, tempFiles: inout [URL]
+        clips: [VlogClip], timelineMuted: Bool, includeTitle: Bool, titleText: String, tempFiles: inout [URL]
     ) async throws -> [URL] {
         var clipURLs: [URL] = []
         if includeTitle {
             update("タイトルを作成中...")
-            var titleURL = try await worker.createTitleCard(clips: clips)
+            var titleURL = try await worker.createTitleCard(titleText: titleText)
             tempFiles.append(titleURL)
             if !timelineMuted {
                 let withSfx = try await worker.addTitleSfx(to: titleURL)
@@ -147,6 +147,13 @@ class ExportManager: ObservableObject {
 
     private func update(_ msg: String) {
         message = msg
+    }
+
+    /// customTitleTextが空/未指定なら先頭クリップの撮影日にフォールバックする
+    /// （Android: VlogExporter.exportの `customTitleText ?: firstDate` と同じ判定）。
+    private static func resolveTitleText(customTitleText: String?, firstClipDateText: String) -> String {
+        if let custom = customTitleText, !custom.isEmpty { return custom }
+        return firstClipDateText
     }
 }
 

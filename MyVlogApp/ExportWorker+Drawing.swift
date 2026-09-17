@@ -6,7 +6,7 @@ import UIKit
 /// タイトルカード・キャプションのCGContext描画処理をまとめたもの。ExportWorker本体
 /// （書き出しパイプラインの重い処理）から、描画の詳細を分離して見通しを良くする。
 extension ExportWorker {
-    func renderTitleFrame(size: CGSize, frame: Int, total: Int, dateText: String) -> CVPixelBuffer? {
+    func renderTitleFrame(size: CGSize, frame: Int, total: Int, titleLines: [String]) -> CVPixelBuffer? {
         var buffer: CVPixelBuffer?
         CVPixelBufferCreate(kCFAllocatorDefault, Int(size.width), Int(size.height),
                             kCVPixelFormatType_32BGRA, nil, &buffer)
@@ -22,11 +22,14 @@ extension ExportWorker {
             bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
         ) else { return pb }
 
-        // Fade: frames 30-49 (spec: frames 31-50 are 1-indexed)
-        let fadeStart = 30, fadeEnd = 50
+        // Android VlogExporter.ktのフェードアウト計算と一致させる（FADE_START_FRAME/FADE_FRAME_COUNT）。
+        // frame=30(0始まり)でalpha=0.95、frame=49でalpha=0.0になるのが正。
+        let fadeStart = VlogLayout.titleFadeStartFrame
+        let fadeFrameCount = VlogLayout.titleFadeFrameCount
+        let fadeEnd = fadeStart + fadeFrameCount // 50 (exclusive)
         let alpha: CGFloat = frame < fadeStart ? 1.0
             : frame >= fadeEnd ? 0.0
-            : 1.0 - CGFloat(frame - fadeStart) / CGFloat(fadeEnd - fadeStart)
+            : 1.0 - CGFloat(frame - fadeStart + 1) / CGFloat(fadeFrameCount)
 
         let renderer = UIGraphicsImageRenderer(size: size)
         let image = renderer.image { _ in
@@ -46,20 +49,20 @@ extension ExportWorker {
             let vlogStr = NSAttributedString(string: "Vlog.", attributes: vlogAttrs)
             let vlogSize = vlogStr.size()
 
-            // Line 2: dateText（Android: TITLE_DATE_FONT_PT / TITLE_DATE_Y_OFFSET_PT、+80ptずらす）
+            // Line 2以降: タイトル文言（既定は撮影日、自由入力なら複数行もありうる）。
+            // Android: TITLE_DATE_FONT_PT / TITLE_DATE_Y_OFFSET_PT、+80ptずらす。
+            // 複数行になっても1行目の位置（titleDateYOffset）は動かさず、以降を
+            // titleDateLineSpacingぶんの行送りで下へ積む（Android: LineAnchor.TOP）。
             let dateFont = UIFont(name: VlogFonts.timeFontName, size: VlogLayout.titleDateFontSize)
                 ?? UIFont.systemFont(ofSize: VlogLayout.titleDateFontSize, weight: .light)
             let dateAttrs: [NSAttributedString.Key: Any] = [
                 .font:            dateFont,
                 .foregroundColor: UIColor.white.withAlphaComponent(alpha)
             ]
-            let dateStr = NSAttributedString(string: dateText, attributes: dateAttrs)
-            let dateSize = dateStr.size()
+            let lineHeight = VlogLayout.titleDateFontSize + VlogLayout.titleDateLineSpacing
 
             // Android centeredY(offsetPt) = (h-text_h)/2 + offsetPt をそのまま踏襲
             let vlogY = (size.height - vlogSize.height) / 2 + VlogLayout.titleVlogYOffset
-            let dateY = (size.height - dateSize.height) / 2 + VlogLayout.titleDateYOffset
-
             vlogStr.draw(in: CGRect(
                 x: (size.width - vlogSize.width) / 2,
                 y: vlogY,
@@ -67,12 +70,18 @@ extension ExportWorker {
                 height: vlogSize.height
             ))
 
-            dateStr.draw(in: CGRect(
-                x: (size.width - dateSize.width) / 2,
-                y: dateY,
-                width: dateSize.width,
-                height: dateSize.height
-            ))
+            for (idx, line) in titleLines.enumerated() {
+                let lineStr = NSAttributedString(string: line, attributes: dateAttrs)
+                let lineSize = lineStr.size()
+                let lineY = (size.height - lineSize.height) / 2
+                    + VlogLayout.titleDateYOffset + CGFloat(idx) * lineHeight
+                lineStr.draw(in: CGRect(
+                    x: (size.width - lineSize.width) / 2,
+                    y: lineY,
+                    width: lineSize.width,
+                    height: lineSize.height
+                ))
+            }
         }
 
         if let cgImage = image.cgImage {

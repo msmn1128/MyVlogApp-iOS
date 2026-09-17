@@ -98,7 +98,11 @@ private struct ClipTile: View {
 
                 Spacer()
 
-                Text(clip.texts.first?.text ?? "")
+                // トリム開始位置に今かかっている区間の文言を表示する（Android: TimelineSection.kt
+                // clip.textAt(clip.startMs)と同じ）。以前は常にtexts[0]（先頭区間）を表示しており、
+                // 複数区間に分割済みのクリップでトリム開始を先頭の区切りより後ろへずらすと、
+                // 実際にはもう表示範囲外になった区間の文言が表示され続けるズレがあった。
+                Text(hitokotoTileText)
                     .font(.system(size: 9))
                     .foregroundStyle(.white)
                     .lineLimit(1)
@@ -171,5 +175,12 @@ private struct ClipTile: View {
 
     private func durationLabel(_ ms: Int64) -> String {
         Formatters.durationLabel(ms: ms)
+    }
+
+    /// 空文字（ひとことを全消しした状態）なら、プレースホルダーに戻して表示する
+    /// （Android: TimelineSection.ktの`.ifBlank { DEFAULT_HITOKOTO }`と同じ）
+    private var hitokotoTileText: String {
+        let text = clip.textAt(positionMs: clip.startMs)
+        return text.isEmpty ? "ひとこと" : text
     }
 }

@@ -199,9 +199,27 @@ class VideoPlayerManager: ObservableObject {
 
     private func advanceToNext(store: VlogStore) {
         guard let cur = store.selectedIndex, !store.clips.isEmpty else { return }
-        let next = cur + 1 < store.clips.count ? cur + 1 : 0
-        shouldAutoPlayNext = true
-        store.selectedIndex = next
+        if cur + 1 < store.clips.count {
+            shouldAutoPlayNext = true
+            store.selectedIndex = cur + 1
+        } else {
+            // 最後のクリップまで再生し終えたら先頭へ戻して一時停止する（Android: returnToStart）。
+            // 以前は先頭へ戻したうえで自動再生を続けていたため、連続再生ONのままだと
+            // 無限ループ再生になってしまっていた。
+            returnToStart(store: store)
+        }
+    }
+
+    private func returnToStart(store: VlogStore) {
+        shouldAutoPlayNext = false
+        if store.selectedIndex != 0 {
+            store.selectedIndex = 0
+        } else if let first = store.clips.first {
+            // 既に先頭クリップを選択中（クリップが1本だけ等）はselectedIndexが変化せず
+            // ContentViewのonChangeが発火しないため、ここで直接シーク＋一時停止する
+            pause()
+            seek(to: first.startMs)
+        }
     }
 }
 

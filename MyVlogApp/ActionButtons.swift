@@ -10,6 +10,7 @@ struct ActionButtons: View {
     @Binding var showSavedProjects: Bool
     @Binding var showPhotoPicker:   Bool
     @Binding var showFilePicker:    Bool
+    @Binding var showTitleDialog:   Bool
 
     @Environment(\.colorScheme) var colorScheme
 
@@ -69,21 +70,21 @@ struct ActionButtons: View {
                         .contentShape(Rectangle())
                         .onTapGesture {
                             guard !store.clips.isEmpty else { return }
-                            postStartExport(includeTitle: true)
+                            showTitleDialog = true
                         }
                         .onLongPressGesture(minimumDuration: 0.5) {
                             guard !store.clips.isEmpty else { return }
-                            postStartExport(includeTitle: false)
+                            exportManager.startExport(clips: store.clips, timelineMuted: store.timelineMuted, includeTitle: false)
                         }
                         // VoiceOver用のアクション（Android: ExportButtonのonClickLabel/onLongClickLabel相当）
                         .accessibilityLabel("書き出し")
                         .accessibilityAction {
                             guard !store.clips.isEmpty else { return }
-                            postStartExport(includeTitle: true)
+                            showTitleDialog = true
                         }
                         .accessibilityAction(named: "タイトルなしで書き出し") {
                             guard !store.clips.isEmpty else { return }
-                            postStartExport(includeTitle: false)
+                            exportManager.startExport(clips: store.clips, timelineMuted: store.timelineMuted, includeTitle: false)
                         }
                         .transition(.opacity)
                 }
@@ -103,13 +104,6 @@ struct ActionButtons: View {
             _ = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
             showPhotoPicker = true
         }
-    }
-
-    private func postStartExport(includeTitle: Bool) {
-        NotificationCenter.default.post(
-            name: .startExport, object: nil,
-            userInfo: ["includeTitle": includeTitle]
-        )
     }
 }
 

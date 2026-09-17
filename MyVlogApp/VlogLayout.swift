@@ -17,9 +17,17 @@ nonisolated enum VlogLayout {
     static let titleDateFontSize: CGFloat = 50
     static let titleVlogYOffset:  CGFloat = -70
     static let titleDateYOffset:  CGFloat = 80
+    /// タイトルカードの文言が複数行になったときの行間。Android: TITLE_DATE_LINE_SPACING_PT
+    static let titleDateLineSpacing: CGFloat = 10
+    /// ファイル名に使う文言の長さ上限。Android: TITLE_FILENAME_MAX_CHARS
+    static let titleFilenameMaxChars: Int = 60
     static let titleCardDuration: Double  = 2.0
     /// タイトルカードのSFXを鳴らし始めるフレーム番号（1始まり、30fps）。Android: TITLE_SFX_FRAME_NUMBER
     static let titleSfxFrameNumber: Int = 21
+    /// タイトルカードのフェードアウトが始まるフレーム番号（0始まり）。Android: FADE_START_FRAME
+    static let titleFadeStartFrame: Int = 30
+    /// フェードアウトにかけるフレーム数。Android: FADE_FRAME_COUNT
+    static let titleFadeFrameCount: Int = 20
 
     /// Android: TOOLBAR_BUTTON_SIZE / TOOLBAR_ICON_SIZE
     static let toolbarButtonSize: CGFloat = 48

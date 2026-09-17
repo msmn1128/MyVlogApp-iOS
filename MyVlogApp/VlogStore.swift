@@ -2,20 +2,13 @@ import SwiftUI
 import Combine
 import Photos
 
-// MARK: - Undo internals
-
-private struct AppSnapshot: Equatable {
-    var clips: [VlogClip]
-    var selectedIndex: Int?
-}
-
-private struct UndoEntry {
-    var snapshot: AppSnapshot
-    var tag: String?
-    var timestamp: Date
-}
-
 // MARK: - VlogStore
+//
+// undo/redo履歴管理はVlogStore+History.swiftへ、自動保存・名前付き保存の永続化は
+// VlogStore+Persistence.swiftへ切り出してある（Android: ClipStoreの分離と同じ考え方）。
+// stored propertyはSwiftの制約上extensionへ置けないため、このファイルの型定義本体に残し、
+// 各extensionのメソッドから参照できるようprivateを外してある
+// （ContentView.swiftのphotoItems等、他のextension分割と同じ方式）。
 
 @MainActor
 class VlogStore: ObservableObject {
@@ -31,17 +24,17 @@ class VlogStore: ObservableObject {
     /// こちらがonの間はどのクリップも音声が出ない（Android: VlogViewModel.timelineMuted）
     @Published var timelineMuted: Bool
 
-    // MARK: Undo / Redo
-    private var undoStack: [UndoEntry] = []
-    private var redoStack: [UndoEntry] = []
-    private let maxUndo = 50
+    // MARK: Undo / Redo（実体の操作はVlogStore+History.swift）
+    var undoStack: [UndoEntry] = []
+    var redoStack: [UndoEntry] = []
+    let maxUndo = 50
     /// Tracks when each debounce-tag was last seen (not just when entry was added)
-    private var lastTagSeen: [String: Date] = [:]
+    var lastTagSeen: [String: Date] = [:]
 
-    // MARK: Persistence
-    private var autoSaveTask: Task<Void, Never>?
-    private let autoSaveKey     = "vlog_autosave_v1"
-    private let savedProjectsKey = "vlog_saved_projects_v1"
+    // MARK: Persistence（実体の操作はVlogStore+Persistence.swift）
+    var autoSaveTask: Task<Void, Never>?
+    let autoSaveKey      = "vlog_autosave_v1"
+    let savedProjectsKey = "vlog_saved_projects_v1"
     private let continuousPlayKey = "vlog_continuous_play"
     private let timelineMutedKey  = "vlog_timeline_muted"
 
@@ -77,53 +70,11 @@ class VlogStore: ObservableObject {
         scheduleAutoSave()
     }
 
-    /// clips配列そのものを触る操作（追加・削除・並べ替え・ミュート）の定型
-    private func mutateClips(tag: String? = nil, _ body: () -> Void) {
+    /// clips配列そのものを触る操作（追加・削除・並べ替え・ミュート）の定型。
+    /// VlogStore+Persistence.swiftのloadProjectからも呼ぶためinternal。
+    func mutateClips(tag: String? = nil, _ body: () -> Void) {
         recordForUndo(tag: tag)
         body()
-        scheduleAutoSave()
-    }
-
-    // MARK: - Undo / Redo public
-
-    var canUndo: Bool { !undoStack.isEmpty }
-    var canRedo: Bool { !redoStack.isEmpty }
-
-    /// Call BEFORE making any change. Saves the current state for undo.
-    /// Debounced: if the same tag is seen again within 900 ms, the entry is NOT duplicated.
-    func recordForUndo(tag: String? = nil) {
-        let now = Date()
-        if let tag {
-            let last = lastTagSeen[tag]
-            lastTagSeen[tag] = now
-            if let last, now.timeIntervalSince(last) < 0.9 {
-                redoStack.removeAll()
-                return
-            }
-        }
-        let snap = AppSnapshot(clips: clips, selectedIndex: selectedIndex)
-        undoStack.append(UndoEntry(snapshot: snap, tag: tag, timestamp: now))
-        if undoStack.count > maxUndo { undoStack.removeFirst() }
-        redoStack.removeAll()
-    }
-
-    func undo() {
-        guard !undoStack.isEmpty else { return }
-        let current = AppSnapshot(clips: clips, selectedIndex: selectedIndex)
-        redoStack.append(UndoEntry(snapshot: current, tag: nil, timestamp: Date()))
-        apply(undoStack.removeLast().snapshot)
-    }
-
-    func redo() {
-        guard !redoStack.isEmpty else { return }
-        let current = AppSnapshot(clips: clips, selectedIndex: selectedIndex)
-        undoStack.append(UndoEntry(snapshot: current, tag: nil, timestamp: Date()))
-        apply(redoStack.removeLast().snapshot)
-    }
-
-    private func apply(_ snap: AppSnapshot) {
-        clips = snap.clips
-        selectedIndex = snap.selectedIndex
         scheduleAutoSave()
     }
 
@@ -283,7 +234,10 @@ class VlogStore: ObservableObject {
     func removeSplitNear(positionMs: Int64) {
         guard let clip = selectedClip, let splitMs = clip.splitPointNear(positionMs: positionMs) else { return }
         updateSelected { c in
-            c.texts.removeAll { $0.startMs == splitMs }
+            // 同じstartMsの区切りが複数あっても1件だけ消す（Android: removeSplitと同じ安全策）
+            if let idx = c.texts.firstIndex(where: { $0.startMs == splitMs }) {
+                c.texts.remove(at: idx)
+            }
         }
     }
 
@@ -321,105 +275,5 @@ class VlogStore: ObservableObject {
         toastTask?.cancel()
         toastMessage = text
         toastTask = ToastTimer.scheduleClear { [weak self] in self?.toastMessage = nil }
-    }
-
-    // MARK: - Auto-save
-
-    func scheduleAutoSave() {
-        autoSaveTask?.cancel()
-        autoSaveTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            guard !Task.isCancelled, let self else { return }
-            await self.performAutoSave()
-        }
-    }
-
-    private func performAutoSave() async {
-        guard let data = try? JSONEncoder().encode(clips) else { return }
-        UserDefaults.standard.set(data,           forKey: autoSaveKey + "_clips")
-        UserDefaults.standard.set(selectedIndex,  forKey: autoSaveKey + "_index")
-    }
-
-    private func restoreAutoSave() async {
-        guard let data   = UserDefaults.standard.data(forKey: autoSaveKey + "_clips"),
-              let saved  = try? JSONDecoder().decode([VlogClip].self, from: data) else { return }
-        let savedIndex   = UserDefaults.standard.object(forKey: autoSaveKey + "_index") as? Int
-
-        var loaded: [VlogClip] = []
-        var excluded = 0
-        for var clip in saved {
-            if let resolved = clip.resolvedFileURL, FileManager.default.fileExists(atPath: resolved.path) {
-                if clip.relativeFilePath == nil {
-                    clip.relativeFilePath = resolved.lastPathComponent
-                }
-                clip.fileURL = resolved
-                loaded.append(clip)
-            } else if let id = clip.assetIdentifier, PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).count > 0 {
-                loaded.append(clip)
-            } else {
-                excluded += 1
-            }
-        }
-        clips = loaded
-        if let si = savedIndex, loaded.indices.contains(si) { selectedIndex = si }
-        else if !loaded.isEmpty { selectedIndex = 0 }
-
-        if excluded > 0 {
-            showMessage("\(excluded) 件の動画は復元できませんでした（移動・削除されたか、アクセス権限が取り消されています）")
-        }
-    }
-
-    // MARK: - Named saves
-
-    func saveCurrentProject(name: String) -> Bool {
-        guard savedProjects.count < 20 else { return false }
-        let now = Int64(Date().timeIntervalSince1970 * 1000)
-        savedProjects.insert(makeSavedProject(id: now, name: name, savedAt: now), at: 0)
-        persistSavedProjects()
-        return true
-    }
-
-    func loadProject(_ project: SavedProject) {
-        mutateClips {
-            clips         = project.clips
-            selectedIndex = clips.isEmpty ? nil : 0
-        }
-    }
-
-    /// 既存の保存を、名前とidはそのままに現在の編集内容で上書きする（Android: overwriteProject）
-    func overwriteProject(id: Int64, name: String) {
-        guard let idx = savedProjects.firstIndex(where: { $0.id == id }) else { return }
-        let now = Int64(Date().timeIntervalSince1970 * 1000)
-        savedProjects[idx] = makeSavedProject(id: id, name: name, savedAt: now)
-        persistSavedProjects()
-    }
-
-    /// 現在編集中のclipsから、指定id/name/savedAtでSavedProjectを組み立てる
-    /// （saveCurrentProject/overwriteProjectで共通の構築ロジック）
-    private func makeSavedProject(id: Int64, name: String, savedAt: Int64) -> SavedProject {
-        SavedProject(
-            id:        id,
-            name:      name,
-            savedAt:   savedAt,
-            clipCount: clips.count,
-            totalMs:   clips.reduce(0) { $0 + $1.trimmedDurationMs },
-            clips:     clips
-        )
-    }
-
-    func deleteSavedProject(id: Int64) {
-        savedProjects.removeAll { $0.id == id }
-        persistSavedProjects()
-    }
-
-    private func persistSavedProjects() {
-        guard let data = try? JSONEncoder().encode(savedProjects) else { return }
-        UserDefaults.standard.set(data, forKey: savedProjectsKey)
-    }
-
-    private func loadSavedProjectsFromDefaults() {
-        guard let data     = UserDefaults.standard.data(forKey: savedProjectsKey),
-              let projects = try? JSONDecoder().decode([SavedProject].self, from: data) else { return }
-        savedProjects = projects.sorted { $0.savedAt > $1.savedAt }
     }
 }

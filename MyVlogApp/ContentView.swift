@@ -18,6 +18,7 @@ struct ContentView: View {
     @State private var showSavedProjects:  Bool = false
     @State private var showFilePicker:     Bool = false
     @State private var showPhotoPicker:    Bool = false
+    @State private var showTitleDialog:    Bool = false
 
     // Photos import（ContentView+Import.swiftのインポート処理から読み書きするためinternal）
     @State var photoItems: [PhotosPickerItem] = []
@@ -55,6 +56,22 @@ struct ContentView: View {
                         .transition(.opacity)
                 }
 
+                // 書き出し（タップ）を押した直後に出す、タイトルカード文言の選択ダイアログ
+                if showTitleDialog {
+                    TitleCreationDialogView(
+                        defaultDateText: store.clips.first?.dateText ?? "",
+                        onDismiss: { showTitleDialog = false },
+                        onConfirm: { titleText in
+                            showTitleDialog = false
+                            exportManager.startExport(
+                                clips: store.clips, timelineMuted: store.timelineMuted,
+                                includeTitle: true, customTitleText: titleText
+                            )
+                        }
+                    )
+                    .transition(.opacity)
+                }
+
                 // 書き出しの完了・中止・失敗トーストを、通常のトースト（store）より優先して
                 // 表示する（同時に出ることは想定していないが、書き出し結果を伝える方を優先）
                 if let toast = exportManager.toastMessage ?? store.toastMessage {
@@ -65,6 +82,7 @@ struct ContentView: View {
             .animation(.default, value: exportManager.isExporting)
             .animation(.default, value: isImporting)
             .animation(.default, value: showSavedProjects)
+            .animation(.default, value: showTitleDialog)
             .animation(.easeInOut(duration: 0.2), value: exportManager.toastMessage)
             .animation(.easeInOut(duration: 0.2), value: store.toastMessage)
         }
@@ -117,23 +135,7 @@ struct ContentView: View {
         // 縦画面でも常に1カラム（プレビュー・タイムライン・ひとこと欄すべて表示）を保つことで、
         // この種のズレが起きようがない構造にする。
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
-            guard let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
-            let screenHeight = UIScreen.main.bounds.height
-            let visible = frame.origin.y < screenHeight
-            guard visible != isKeyboardVisible else { return }
-            // システムのキーボードアニメーションと同じ時間で比率を動かす。
-            // 以前はここがwithAnimationで包まれておらず、比率がキーボードの
-            // スライドと無関係に一瞬で切り替わっていた（Android版で
-            // 「ひとこと」欄の枠が分割の瞬間に飛んで見えたのと同種の問題）。
-            let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
-            withAnimation(.easeInOut(duration: duration)) {
-                isKeyboardVisible = visible
-            }
-        }
-        // Export trigger
-        .onReceive(NotificationCenter.default.publisher(for: .startExport)) { note in
-            let includeTitle = (note.userInfo?["includeTitle"] as? Bool) ?? true
-            exportManager.startExport(clips: store.clips, timelineMuted: store.timelineMuted, includeTitle: includeTitle)
+            handleKeyboardFrameChange(note)
         }
         // Photo picker
         // photoLibrary: .shared() を渡さないとPhotosPickerItem.itemIdentifierが常にnilになり、
@@ -170,7 +172,8 @@ struct ContentView: View {
             ActionButtons(
                 showSavedProjects: $showSavedProjects,
                 showPhotoPicker:   $showPhotoPicker,
-                showFilePicker:    $showFilePicker
+                showFilePicker:    $showFilePicker,
+                showTitleDialog:   $showTitleDialog
             )
             .padding(.horizontal, 12)
 
@@ -223,7 +226,8 @@ struct ContentView: View {
                 ActionButtons(
                     showSavedProjects: $showSavedProjects,
                     showPhotoPicker:   $showPhotoPicker,
-                    showFilePicker:    $showFilePicker
+                    showFilePicker:    $showFilePicker,
+                    showTitleDialog:   $showTitleDialog
                 )
 
                 if exportManager.isExporting {
@@ -242,53 +246,23 @@ struct ContentView: View {
         }
         .padding(.vertical, 10)
     }
-}
 
-// MARK: - Toast（Android: Toast相当の一時的な通知）
+    // MARK: - Keyboard visibility
 
-struct ToastView: View {
-    let text: String
-
-    var body: some View {
-        VStack {
-            Spacer()
-            Text(text)
-                .font(.system(size: 13))
-                .foregroundStyle(.white)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 16).padding(.vertical, 10)
-                .background(Color.black.opacity(0.85))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .padding(.bottom, 24)
-                .padding(.horizontal, 24)
-                .transition(.opacity)
-        }
-        .allowsHitTesting(false)
-        .animation(.easeInOut(duration: 0.2), value: text)
-    }
-}
-
-// MARK: - Import overlay
-
-struct ImportOverlayView: View {
-    let progress: Double
-    let message: String
-
-    var body: some View {
-        ZStack {
-            Color.black.opacity(0.55).ignoresSafeArea()
-            VStack(spacing: 16) {
-                ProgressView(value: progress)
-                    .progressViewStyle(.linear)
-                    .tint(AppColors.primary)
-                    .frame(width: 260)
-                Text(message)
-                    .foregroundStyle(.white)
-                    .font(.subheadline)
-            }
-            .padding(28)
-            .background(.regularMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 16))
+    /// キーボード表示状態の変化を受けて、タイムライン:ひとことの高さ比率を切り替える
+    /// （timelineHeightRatio/editorHeightRatioが参照するisKeyboardVisibleの更新）。
+    private func handleKeyboardFrameChange(_ note: Notification) {
+        guard let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+        let screenHeight = UIScreen.main.bounds.height
+        let visible = frame.origin.y < screenHeight
+        guard visible != isKeyboardVisible else { return }
+        // システムのキーボードアニメーションと同じ時間で比率を動かす。
+        // 以前はここがwithAnimationで包まれておらず、比率がキーボードの
+        // スライドと無関係に一瞬で切り替わっていた（Android版で
+        // 「ひとこと」欄の枠が分割の瞬間に飛んで見えたのと同種の問題）。
+        let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+        withAnimation(.easeInOut(duration: duration)) {
+            isKeyboardVisible = visible
         }
     }
 }

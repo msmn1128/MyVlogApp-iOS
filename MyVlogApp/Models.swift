@@ -166,9 +166,14 @@ nonisolated struct VlogClip: Identifiable, Codable, Equatable {
         return texts[textIndexAt(positionMs: positionMs)].text
     }
 
+    /// tolerance(最大1500ms)が区切りの最小間隔(400ms)より大きいため、1つの位置の
+    /// 許容範囲に複数の区切りが入りうる。「最初に見つかった区切り」ではなく
+    /// 「最も近い区切り」を返す（Android: VlogModels.kt splitPointNearと同じ、minByOrNull方式）
     func splitPointNear(positionMs: Int64) -> Int64? {
         let tolerance = max(200, min(1500, durationMs / 40))
-        return splitPoints.first { abs($0 - positionMs) <= tolerance }
+        return splitPoints
+            .filter { abs($0 - positionMs) <= tolerance }
+            .min { abs($0 - positionMs) < abs($1 - positionMs) }
     }
 
     /// Returns (relativeStartMs, relativeEndMs, text) relative to startMs (0 = clip start after trim)

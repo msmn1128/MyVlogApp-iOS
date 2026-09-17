@@ -87,20 +87,15 @@ extension ContentView {
         let total = sources.count
         importMessage = "動画を読み込み中 (0/\(total))..."
 
-        // importTaskはbackgroundTaskIDと同じく「先にvarで宣言してクロージャに直接
-        // キャプチャさせる」形にしてある。letで一括代入する形にすると、期限切れ
-        // ハンドラ（beginBackgroundTaskの呼び出し時点ではまだimportTaskが存在しない）
-        // から参照できず、間に参照型の箱を挟む回り道が必要になってしまう。
+        // importTaskは「先にvarで宣言してクロージャに直接キャプチャさせる」形にしてある。
+        // letで一括代入する形にすると、期限切れハンドラ（backgroundTask.beginの呼び出し
+        // 時点ではまだimportTaskが存在しない）から参照できず、間に参照型の箱を挟む
+        // 回り道が必要になってしまう。
         var importTask: Task<ImportedClips, Never>?
-        var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
-        func endBackgroundTaskIfNeeded() {
-            guard backgroundTaskID != .invalid else { return }
-            UIApplication.shared.endBackgroundTask(backgroundTaskID)
-            backgroundTaskID = .invalid
-        }
-        backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "VlogImport") {
+        let backgroundTask = BackgroundTaskGuard()
+        backgroundTask.begin(name: "VlogImport") {
             importTask?.cancel()
-            endBackgroundTaskIfNeeded()
+            backgroundTask.end()
         }
 
         let task = Task<ImportedClips, Never> {
@@ -131,7 +126,7 @@ extension ContentView {
 
         var loadedClips = await task.value
         let wasCancelled = task.isCancelled
-        endBackgroundTaskIfNeeded()
+        backgroundTask.end()
 
         loadedClips.sort { $0.index < $1.index }
         let newClips = loadedClips.map { $0.clip }

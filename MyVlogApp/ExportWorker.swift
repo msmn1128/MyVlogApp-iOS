@@ -16,78 +16,7 @@ import Photos
 /// バックグラウンド実行キューで動くため、メインスレッド＝UIの応答性をふさがない。
 actor ExportWorker {
 
-    // MARK: - Title card (AVAssetWriter, 2s black + text)
-
-    func createTitleCard(clips: [VlogClip]) async throws -> URL {
-        let url = tempURL("title_card")
-        let size = VlogLayout.canvasSize
-        let fps: Int32 = 30
-        let totalFrames = Int(VlogLayout.titleCardDuration * Double(fps))  // 60 frames
-
-        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
-        let input = AVAssetWriterInput(mediaType: .video, outputSettings: Self.h264Settings(canvas: size))
-        input.expectsMediaDataInRealTime = false
-        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
-            assetWriterInput: input,
-            sourcePixelBufferAttributes: Self.pixelBufferAttributes(canvas: size)
-        )
-        writer.add(input)
-        writer.startWriting()
-        writer.startSession(atSourceTime: .zero)
-
-        let dateText = clips.first?.dateText ?? ""
-        for frameIdx in 0..<totalFrames {
-            try Task.checkCancellation()
-            while !input.isReadyForMoreMediaData { await Task.yield() }
-            let t = CMTime(value: CMTimeValue(frameIdx), timescale: fps)
-            if let buffer = renderTitleFrame(size: size, frame: frameIdx, total: totalFrames, dateText: dateText) {
-                adaptor.append(buffer, withPresentationTime: t)
-            }
-        }
-        input.markAsFinished()
-        await writer.finishWriting()
-        if let err = writer.error { throw err }
-        return url
-    }
-
-    /// タイトルカード（映像のみ）にtitle.mp3を合成する。
-    /// SFXはTITLE_SFX_FRAME_NUMBERフレーム目（30fpsなので約0.67秒後）から鳴り始め、
-    /// タイトルカードの尺ぴったりに切る（Android: titleSfxDelayMs / atrim相当）。
-    func addTitleSfx(to videoURL: URL) async throws -> URL {
-        guard let sfxURL = Bundle.main.url(forResource: "title", withExtension: "mp3") else {
-            return videoURL
-        }
-
-        let videoAsset = AVURLAsset(url: videoURL)
-        let sfxAsset   = AVURLAsset(url: sfxURL)
-        guard let videoTrack = try await videoAsset.loadTracks(withMediaType: .video).first,
-              let sfxTrack   = try await sfxAsset.loadTracks(withMediaType: .audio).first else {
-            return videoURL
-        }
-
-        let composition = AVMutableComposition()
-        let compVideo = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)!
-        let videoDuration = try await videoAsset.load(.duration)
-        try compVideo.insertTimeRange(CMTimeRange(start: .zero, duration: videoDuration), of: videoTrack, at: .zero)
-
-        let delaySeconds = Double(VlogLayout.titleSfxFrameNumber - 1) / 30.0
-        let delayTime    = CMTime(seconds: delaySeconds, preferredTimescale: 600)
-        let remaining    = videoDuration - delayTime
-        if remaining > .zero {
-            let sfxDuration  = try await sfxAsset.load(.duration)
-            let clippedRange = CMTimeRange(start: .zero, duration: min(sfxDuration, remaining))
-            let compAudio = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)!
-            try compAudio.insertTimeRange(clippedRange, of: sfxTrack, at: delayTime)
-        }
-
-        let outURL = tempURL("title_with_sfx")
-        guard let session = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else {
-            return videoURL
-        }
-        session.outputFileType = .mov
-        try await session.export(to: outURL, as: .mov)
-        return outURL
-    }
+    // タイトルカード生成(createTitleCard/addTitleSfx)はExportWorker+TitleCard.swiftへ切り出してある。
 
     // MARK: - Per-clip processing
 
@@ -196,8 +125,9 @@ actor ExportWorker {
         return (writer, writerInput, adaptor)
     }
 
-    /// createTitleCard/makeClipWriterで共通のAVAssetWriterInput設定
-    private static func h264Settings(canvas: CGSize) -> [String: Any] {
+    /// createTitleCard(ExportWorker+TitleCard.swift)/makeClipWriterで共通のAVAssetWriterInput設定。
+    /// ファイルをまたいで参照するためinternal
+    static func h264Settings(canvas: CGSize) -> [String: Any] {
         [
             AVVideoCodecKey:  AVVideoCodecType.h264,
             AVVideoWidthKey:  Int(canvas.width),
@@ -205,8 +135,9 @@ actor ExportWorker {
         ]
     }
 
-    /// createTitleCard/makeClipWriterで共通のAVAssetWriterInputPixelBufferAdaptor設定
-    private static func pixelBufferAttributes(canvas: CGSize) -> [String: Any] {
+    /// createTitleCard(ExportWorker+TitleCard.swift)/makeClipWriterで共通の
+    /// AVAssetWriterInputPixelBufferAdaptor設定。ファイルをまたいで参照するためinternal
+    static func pixelBufferAttributes(canvas: CGSize) -> [String: Any] {
         [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
             kCVPixelBufferWidthKey as String:  Int(canvas.width),
@@ -262,19 +193,29 @@ actor ExportWorker {
         }
 
         let composition = AVMutableComposition()
-        let compVideo = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)!
+        guard let compVideo = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+            throw ExportError.sessionCreationFailed
+        }
         try compVideo.insertTimeRange(CMTimeRange(start: .zero, duration: videoDuration), of: videoOnlyTrack, at: .zero)
 
         if !silent {
             let srcAudioTracks = try await sourceAsset.loadTracks(withMediaType: .audio)
             if let srcAudio = srcAudioTracks.first {
-                let compAudio = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)!
+                guard let compAudio = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+                    throw ExportError.sessionCreationFailed
+                }
                 try? compAudio.insertTimeRange(trimRange, of: srcAudio, at: .zero)
             }
         }
 
         let outURL = tempURL("clip_\(UUID().uuidString)")
-        guard let session = AVAssetExportSession(asset: composition, presetName: AVAssetExportPreset1920x1080) else {
+        // compVideoはrenderClipVideoWithTextで既にキャンバスサイズへ変換済みの映像なので、
+        // ここでは音声トラックを合流させるだけで済む。1920x1080プリセットで固定すると
+        // 変換の必要が無い映像まで毎回再エンコードしてしまい、画質劣化と処理時間の両方で
+        // 無駄が出る。可能ならパススルー（無劣化の再多重化）を使う
+        // （Android版が個別エンコード→結合の2段構成をやめ、1回のエンコードに統合したのと同じ狙い）。
+        let presetName = await bestExportPreset(for: composition, outputFileType: .mov, fallback: AVAssetExportPreset1920x1080)
+        guard let session = AVAssetExportSession(asset: composition, presetName: presetName) else {
             throw ExportError.sessionCreationFailed
         }
         session.shouldOptimizeForNetworkUse = true
@@ -286,10 +227,12 @@ actor ExportWorker {
 
     func concatenate(urls: [URL]) async throws -> URL {
         let composition = AVMutableComposition()
-        let videoTrack  = composition.addMutableTrack(withMediaType: .video,
-                                                       preferredTrackID: kCMPersistentTrackID_Invalid)!
-        let audioTrack  = composition.addMutableTrack(withMediaType: .audio,
-                                                       preferredTrackID: kCMPersistentTrackID_Invalid)!
+        guard let videoTrack = composition.addMutableTrack(withMediaType: .video,
+                                                            preferredTrackID: kCMPersistentTrackID_Invalid),
+              let audioTrack = composition.addMutableTrack(withMediaType: .audio,
+                                                            preferredTrackID: kCMPersistentTrackID_Invalid) else {
+            throw ExportError.sessionCreationFailed
+        }
 
         var insertTime = CMTime.zero
         for url in urls {
@@ -305,7 +248,10 @@ actor ExportWorker {
         }
 
         let outURL = tempURL("merged")
-        guard let session = AVAssetExportSession(asset: composition, presetName: AVAssetExportPreset1920x1080) else {
+        // 各クリップは既にキャンバスサイズ・同じH264設定で書き出し済みなので、結合だけなら
+        // パススルーで再エンコードなしに済ませられる（mergeClipAudioと同じ狙い）。
+        let presetName = await bestExportPreset(for: composition, outputFileType: .mp4, fallback: AVAssetExportPreset1920x1080)
+        guard let session = AVAssetExportSession(asset: composition, presetName: presetName) else {
             throw ExportError.sessionCreationFailed
         }
         session.shouldOptimizeForNetworkUse = true
@@ -315,14 +261,28 @@ actor ExportWorker {
 
     // MARK: - Save to camera roll
 
-    /// 写真アプリでの表示名「Vlog_yyyy-MM-dd.mp4」を組み立てる（Android: buildDisplayNameの
-    /// ベース名部分のみ移植）。Android版は同名チェックにMediaStoreの自アプリファイルを権限なしで
-    /// 参照できるが、iOSで同等の重複チェックをするにはPHPhotoLibraryの読み取り権限
-    /// （.addOnlyより広い権限）が追加で必要になり、書き出しのたびに権限ダイアログが増えてしまう。
-    /// その副作用の方が実害が大きいため、重複チェックは行わずベース名をそのまま使う
+    /// 写真アプリでの表示名「Vlog_<タイトル文言>.mp4」を組み立てる（Android: buildDisplayName
+    /// と同じ方針。既定は撮影日、タイトルを自由入力していればそちらを使う）。Android版は
+    /// 同名チェックにMediaStoreの自アプリファイルを権限なしで参照できるが、iOSで同等の
+    /// 重複チェックをするにはPHPhotoLibraryの読み取り権限（.addOnlyより広い権限）が追加で
+    /// 必要になり、書き出しのたびに権限ダイアログが増えてしまう。その副作用の方が実害が
+    /// 大きいため、重複チェックは行わずベース名をそのまま使う
     /// （同名ファイルがあってもPhotosアプリ側でファイル名の衝突は解決される）。
-    func displayName(firstClipDateText: String) -> String {
-        "Vlog_\(firstClipDateText.replacingOccurrences(of: "/", with: "-")).mp4"
+    func displayName(titleText: String) -> String {
+        "Vlog_\(sanitizeForFileName(titleText)).mp4"
+    }
+
+    /// タイトル文言をファイル名の一部として使える形にする
+    /// （改行・パス区切りの除去、長さの切り詰め。Android: sanitizeForFileName）
+    private func sanitizeForFileName(_ titleText: String) -> String {
+        let singleLine = titleText
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let withoutPathChars = singleLine.replacingOccurrences(
+            of: "[\\\\/:*?\"<>|]", with: "-", options: .regularExpression
+        )
+        let truncated = String(withoutPathChars.prefix(VlogLayout.titleFilenameMaxChars))
+        return truncated.isEmpty ? "Untitled" : truncated
     }
 
     func saveToPhotoLibrary(url: URL, displayName: String) async throws {
@@ -346,7 +306,26 @@ actor ExportWorker {
 
     // MARK: - Helpers
 
-    private func tempURL(_ name: String) -> URL {
+    /// パススルー（無劣化の再多重化）が使えるか判定し、使えるなら
+    /// AVAssetExportPresetPassthroughを、使えなければfallbackのプリセットを返す。
+    /// AVAssetExportPresetPassthroughはallExportPresets()/exportPresets(compatibleWith:)には
+    /// 出てこない特別な値なので、determineCompatibility(ofExportPreset:with:outputFileType:)で
+    /// 個別に互換性を確認する必要がある（Apple公式ドキュメント記載の判定方法）。
+    private func bestExportPreset(for asset: AVAsset, outputFileType: AVFileType, fallback: String) async -> String {
+        let isPassthroughCompatible = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            AVAssetExportSession.determineCompatibility(
+                ofExportPreset: AVAssetExportPresetPassthrough,
+                with: asset,
+                outputFileType: outputFileType
+            ) { isCompatible in
+                continuation.resume(returning: isCompatible)
+            }
+        }
+        return isPassthroughCompatible ? AVAssetExportPresetPassthrough : fallback
+    }
+
+    /// ExportWorker+TitleCard.swiftからも参照するためinternal
+    func tempURL(_ name: String) -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("\(name)_\(Int(Date().timeIntervalSince1970)).mov")
     }
