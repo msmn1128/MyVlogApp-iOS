@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// 書き出しボタン（タップ＝タイトルあり）を押した直後に出す、タイトルカード文言の選択ダイアログ。
 /// Android版TitleCreationDialogと同じ、中央カード＋暗幕オーバーレイで
@@ -29,29 +30,52 @@ struct TitleCreationDialogView: View {
                     .font(.system(size: 20, weight: .semibold))
                     .padding(.bottom, 20)
 
-                radioRow(selected: !isCustomSelected, onSelect: { customText = nil }) {
+                // 日付を選ぶ行。中身はTextだけでフォーカス取得と競合する要素がないので、
+                // 行全体にタップ判定を乗せて問題ない。
+                HStack(alignment: .center, spacing: 8) {
+                    radioIcon(selected: !isCustomSelected)
                     Text(defaultDateText)
                         .font(.custom(VlogFonts.timeFontName, size: 15))
                 }
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
+                .onTapGesture { customText = nil }
 
-                radioRow(
-                    selected: isCustomSelected,
-                    onSelect: { if !isCustomSelected { customText = "" } },
-                    alignTop: true
-                ) {
-                    TextField(
-                        "タイトルを入力",
-                        text: Binding(get: { customText ?? "" }, set: { customText = $0 }),
-                        axis: .vertical
-                    )
-                    .font(.custom(VlogFonts.timeFontName, size: 15))
-                    .textFieldStyle(.plain)
+                // 自由入力の行。Android版（RadioOptionRow）と違い、行全体にタップ判定を重ねると
+                // TextField自身のタップ（フォーカス取得）と競合してしまう。Android版でも選択の
+                // 切り替えは実質「入力された瞬間にcustomTextが非nilになる」ことで起きているので、
+                // ここではアイコン単体だけをタップ対象にし、あとは入力（Bindingのset）に選択を任せる。
+                HStack(alignment: .center, spacing: 8) {
+                    radioIcon(selected: isCustomSelected)
+                        .onTapGesture {
+                            if customText == nil { customText = "" }
+                        }
+
+                    ZStack(alignment: .topLeading) {
+                        if (customText ?? "").isEmpty {
+                            Text("タイトルを入力")
+                                .font(.custom(VlogFonts.timeFontName, size: 15))
+                                .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
+                                .allowsHitTesting(false)
+                        }
+                        // SwiftUI標準のTextField(axis: .vertical)がこの環境（iOS 27 SDK）で
+                        // 入力内容を保持できない（打っても消える）ことが実機確認で分かったため、
+                        // 既存のNativeTextView（TextInputView.swift）と同じくUITextViewに直結する。
+                        GrowingTextView(
+                            text: Binding(get: { customText ?? "" }, set: { customText = $0 }),
+                            fontName: VlogFonts.timeFontName,
+                            fontSize: 15,
+                            textColor: colorScheme == .dark ? .white : .black
+                        )
+                    }
+                    .frame(height: 22)
                     .padding(10)
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
                             .stroke(AppColors.outlineVariant(colorScheme), lineWidth: 1)
                     )
                 }
+                .padding(.vertical, 8)
 
                 HStack {
                     Spacer()
@@ -80,21 +104,51 @@ struct TitleCreationDialogView: View {
         }
     }
 
-    /// ラジオボタン1個＋その選択肢の中身、という行の共通レイアウト
-    @ViewBuilder
-    private func radioRow<Content: View>(
-        selected: Bool,
-        onSelect: @escaping () -> Void,
-        alignTop: Bool = false,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        HStack(alignment: alignTop ? .top : .center, spacing: 8) {
-            Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                .foregroundStyle(selected ? AppColors.primary(colorScheme) : AppColors.onSurfaceVariant(colorScheme))
-            content()
+    private func radioIcon(selected: Bool) -> some View {
+        Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+            .foregroundStyle(selected ? AppColors.primary(colorScheme) : AppColors.onSurfaceVariant(colorScheme))
+    }
+}
+
+/// TitleCreationDialogView専用の1行入力欄。TextInputView.swiftのNativeTextViewと同じく、
+/// SwiftUI標準のTextFieldがこの環境で不安定（入力内容が保持されない等）なのを避けて
+/// UITextViewに直結する。
+private struct GrowingTextView: UIViewRepresentable {
+    @Binding var text: String
+    let fontName: String
+    let fontSize: CGFloat
+    let textColor: UIColor
+
+    func makeUIView(context: Context) -> UITextView {
+        let tv = UITextView()
+        tv.delegate = context.coordinator
+        tv.font = UIFont(name: fontName, size: fontSize)
+        tv.textColor = textColor
+        tv.backgroundColor = .clear
+        tv.isScrollEnabled = false
+        tv.textContainerInset = .zero
+        tv.textContainer.lineFragmentPadding = 0
+        tv.text = text
+        return tv
+    }
+
+    func updateUIView(_ uiView: UITextView, context: Context) {
+        context.coordinator.parent = self
+        if uiView.text != text {
+            uiView.text = text
         }
-        .padding(.vertical, 8)
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onSelect)
+        uiView.font = UIFont(name: fontName, size: fontSize)
+        uiView.textColor = textColor
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var parent: GrowingTextView
+        init(_ parent: GrowingTextView) { self.parent = parent }
+
+        func textViewDidChange(_ textView: UITextView) {
+            parent.text = textView.text
+        }
     }
 }
