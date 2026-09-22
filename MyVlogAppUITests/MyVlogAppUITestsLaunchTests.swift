@@ -19,13 +19,14 @@ final class MyVlogAppUITestsLaunchTests: XCTestCase {
 
     @MainActor
     func testLaunch() throws {
+        // 起動引数を付けて使い捨ての保存領域で立ち上げる（UITestSupport.swift）。
+        // 付けないとシミュレータに残っている実際の編集内容が写り込み、
+        // 起動スクリーンショットが実行のたびに変わってしまう
         let app = XCUIApplication()
+        app.launchArguments += ["-UITestSeedClips", "0"]
         app.launch()
 
-        // Insert steps here to perform after app launch but before taking a screenshot,
-        // such as logging into a test account or navigating somewhere in the app
-        // XCUIAutomation Documentation
-        // https://developer.apple.com/documentation/xcuiautomation
+        XCTAssertTrue(app.staticTexts["タイムライン"].waitForExistence(timeout: 20), "アプリが起動しなかった")
 
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = "Launch Screen"

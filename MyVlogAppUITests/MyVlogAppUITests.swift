@@ -5,23 +5,26 @@
 
 import XCTest
 
+/// 起動直後の主要要素と、ひとこと欄まわりのスモークテスト。
+///
+/// 起動には`launchApp(clipCount:)`（VlogUITestHelpers.swift）を使う。0本を渡しても
+/// 起動引数は付くので、保存先が使い捨ての領域に切り替わり、シミュレータに残っている
+/// 実際の編集内容に左右されない空の状態から始められる。
 final class MyVlogAppUITests: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = false
     }
 
-    /// 起動直後の主要要素と、追加メニューが開けることを確認するスモークテスト。
+    /// 起動直後の主要要素と、追加メニューが開けることを確認する。
     /// PHPickerViewControllerは別プロセスで動くため、動画選択そのものはXCUITestの
     /// スコープ外（app.cellsで拾えない）——そこから先は手動確認に委ねる。
     @MainActor
     func testHomeScreenAndAddMenu() throws {
-        let app = XCUIApplication()
-        app.launch()
+        let app = launchApp(clipCount: 0)
 
-        XCTAssertTrue(app.staticTexts["タイムライン"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["タイムライン"].exists)
         XCTAssertTrue(app.staticTexts["ひとこと"].waitForExistence(timeout: 5))
-        // 前回の自動保存でクリップが残っている場合と、空の場合の両方がありうる。
 
         let addButton = app.buttons["動画を追加"]
         XCTAssertTrue(addButton.waitForExistence(timeout: 5))
@@ -35,41 +38,37 @@ final class MyVlogAppUITests: XCTestCase {
         // メニューを閉じる（画面外をタップ）
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.05)).tap()
 
-        let screenshot = app.screenshot()
-        let attachment = XCTAttachment(screenshot: screenshot)
-        attachment.lifetime = .keepAlways
-        attachment.name = "home_screen"
-        add(attachment)
+        attachScreenshot(app, name: "home_screen")
     }
 
-    /// TEMP QA: キーボードのスワイプダウンで閉じるかどうかを確認する。
+    /// ひとこと欄はタップ一回でキーボードが開き、アクセサリの「閉じる」で閉じられる。
+    ///
+    /// 回帰テスト: SwiftUIのジェスチャー配送とUIKitのfirst responder化のタイムラグで
+    /// 「1回目のタップではキーボードが開かない」症状があり、touchesBeganでその場で
+    /// becomeFirstResponderする実装（TextInputView.swiftのEagerFirstResponderTextView）で
+    /// 直している。その入口と出口が両方生きていることを見る。
     @MainActor
-    func testKeyboardSwipeDown() throws {
-        let app = XCUIApplication()
-        app.launch()
+    func testHitokotoKeyboardOpensOnFirstTapAndCloses() throws {
+        let app = launchApp(clipCount: 0)
 
         let textView = app.textViews.firstMatch
-        XCTAssertTrue(textView.waitForExistence(timeout: 10))
+        XCTAssertTrue(textView.waitForExistence(timeout: 10), "ひとこと欄が見つからない")
         textView.tap()
 
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "キーボードが開かなかった")
+        XCTAssertTrue(
+            app.keyboards.firstMatch.waitForExistence(timeout: 5),
+            "1回目のタップでキーボードが開かなかった"
+        )
+        attachScreenshot(app, name: "keyboard_open")
 
-        let before = app.screenshot()
-        add(XCTAttachment(screenshot: before))
+        let done = app.buttons["keyboardDone"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5), "キーボードの「閉じる」が見つからない")
+        done.tap()
 
-        // キーボード上端からスワイプダウン
-        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.72))
-        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.98))
-        start.press(forDuration: 0.05, thenDragTo: end)
-
-        sleep(1)
-        let after = app.screenshot()
-        let attachment = XCTAttachment(screenshot: after)
-        attachment.lifetime = .keepAlways
-        attachment.name = "after_swipe_down"
-        add(attachment)
-
-        // キーボードがまだあるかどうかをログに残す（成否はスクリーンショットで人間が判断）
-        print("keyboard exists after swipe: \(app.keyboards.firstMatch.exists)")
+        XCTAssertTrue(
+            waitUntil(timeout: 5) { !app.keyboards.firstMatch.exists },
+            "「閉じる」を押してもキーボードが閉じなかった"
+        )
+        attachScreenshot(app, name: "keyboard_closed")
     }
 }
