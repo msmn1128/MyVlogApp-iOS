@@ -13,7 +13,37 @@ import UIKit
 // そのための最小限の道具をここへ置く。
 // =====================================================================================
 
-enum TestVideoFactory {
+/// 書き出し（ExportWorker）を、アプリが実際に走らせるのと同じ優先度（utility）で実行する。
+///
+/// ExportWorkerの中心は`AVAssetReader.copyNextSampleBuffer()`という同期呼び出しで、
+/// AVFoundation内部のデコードスレッド（utility）を待つ。アプリ側はこれを
+/// `Task(priority: .utility)`で起こし、その結果を誰も待たない（exportTaskは中止用に
+/// 持っているだけ）ので、最後までutilityのまま走る。
+///
+/// 一方テストは結果を待つ必要がある。ここで`Task(priority: .utility) { ... }.value`と
+/// 書くと、Swiftの優先度昇格で待つ側（テスト＝user-initiated）の優先度へ引き上げられ、
+/// 本番と違う条件になってしまう。実際その形だと
+/// 「User-initiatedのスレッドがUtilityのスレッドを待っている」という優先度逆転が起きる
+/// （Thread Performance Checkerが報告する）。
+///
+/// 継続（continuation）で結果を受け渡すと昇格が伝わらないので、本番と同じく
+/// utilityのまま最後まで走る。テストを本番の条件へ寄せるための仕掛けであって、
+/// 警告を黙らせるためのごまかしではない。
+nonisolated func runAtExportPriority<T: Sendable>(
+    _ body: @escaping @Sendable () async throws -> T
+) async throws -> T {
+    try await withCheckedThrowingContinuation { continuation in
+        Task.detached(priority: .utility) {
+            do { continuation.resume(returning: try await body()) }
+            catch { continuation.resume(throwing: error) }
+        }
+    }
+}
+
+/// 可変状態を持たないヘルパーなので、プロジェクト全体の既定（MainActor）から外す。
+/// 外さないと、テスト用の動画生成（AVAssetWriterのエンコードループ）が
+/// メインスレッドで走ってしまう
+nonisolated enum TestVideoFactory {
 
     /// テスト用の短い単色動画（無音）を一時ディレクトリへ作る。
     ///
@@ -101,7 +131,9 @@ enum TestVideoError: Error {
 
 // MARK: - 書き出した動画の中身を調べる
 
-enum FrameInspector {
+/// こちらもTestVideoFactoryと同じ理由でnonisolated
+/// （1920x1080のピクセル走査をメインスレッドでやらせない）
+nonisolated enum FrameInspector {
 
     /// 動画の指定時刻のフレームを取り出す（前後にずれないよう許容誤差は0にする）
     static func frame(of url: URL, atSeconds seconds: Double) async throws -> CGImage {

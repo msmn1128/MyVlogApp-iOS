@@ -16,6 +16,27 @@ import Photos
 /// バックグラウンド実行キューで動くため、メインスレッド＝UIの応答性をふさがない。
 actor ExportWorker {
 
+    /// このactorの仕事を走らせる専用のキュー（既定のcooperative thread poolは使わない）。
+    ///
+    /// 書き出しの中心は`AVAssetReader.copyNextSampleBuffer()`という**同期の**呼び出しで、
+    /// フレームを1枚読むたびにAVFoundation内部のデコードスレッド（utility）を待つ。
+    /// これを既定のcooperative thread poolで走らせると2つ困ることが起きる:
+    ///
+    ///   1. 書き出しが終わるまでプールのスレッドを1本占有し続ける
+    ///      （他の並行処理――サムネイル生成や波形デコード――が詰まる）
+    ///   2. 呼び出し側の優先度（画面からの操作＝user-initiated）へ引き上げられた状態で
+    ///      utilityのスレッドを待つ形になり、優先度逆転になる
+    ///      （Thread Performance Checkerが "waiting on a lower QoS thread" として報告する）
+    ///
+    /// 専用のキューを最初からutilityで持たせて、どちらも避ける。
+    /// 書き出しは「進捗を見せながら裏で進む長い処理」なので、utilityが本来の優先度
+    /// （ExportManagerが書き出しのTaskをutilityで起こしているのと揃えてある）。
+    private nonisolated let queue = DispatchSerialQueue(
+        label: "com.masamune.myvlogapp.export", qos: .utility
+    )
+
+    nonisolated var unownedExecutor: UnownedSerialExecutor { queue.asUnownedSerialExecutor() }
+
     // タイトルカード生成(createTitleCard/addTitleSfx)はExportWorker+TitleCard.swiftへ切り出してある。
 
     // MARK: - Per-clip processing

@@ -79,7 +79,11 @@ final class ExportManager {
             self?.exportTask?.cancel()
             self?.backgroundTask.end()
         }
-        exportTask  = Task {
+        // 書き出しは「進捗を見せながら裏で進む長い処理」なので、画面の操作と同じ優先度では走らせない。
+        // MainActorから素のTaskで起こすとuser-initiated相当になり、AVFoundationの内部スレッド
+        // （utility）をそれより高い優先度で待つ形＝優先度逆転になる（ExportWorkerのqueueと揃える）。
+        // 進捗バーが出ていてUIは触れるままなので、utilityがこの仕事の本来の優先度。
+        exportTask  = Task(priority: .utility) {
             await runExport(
                 clips: clips, timelineMuted: timelineMuted, includeTitle: includeTitle, customTitleText: customTitleText
             )

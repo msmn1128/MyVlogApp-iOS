@@ -17,6 +17,29 @@ import Testing
 // 取りこぼさないよう .serialized にしてある。
 // =====================================================================================
 
+/// ExportWorkerを、アプリが実際に走らせるのと同じ優先度（utility）で呼ぶための薄い包み。
+///
+/// テストからそのままawaitすると優先度が引き上げられて本番と条件が変わってしまう
+/// （詳しくは TestVideoFactory.swift の `runAtExportPriority`）。
+private nonisolated struct ExportRunner {
+    private let worker = ExportWorker()
+
+    func processClip(_ clip: VlogClip, silent: Bool) async throws -> URL {
+        let worker = self.worker
+        return try await runAtExportPriority { try await worker.processClip(clip, silent: silent) }
+    }
+
+    func createTitleCard(titleText: String) async throws -> URL {
+        let worker = self.worker
+        return try await runAtExportPriority { try await worker.createTitleCard(titleText: titleText) }
+    }
+
+    func concatenate(urls: [URL]) async throws -> URL {
+        let worker = self.worker
+        return try await runAtExportPriority { try await worker.concatenate(urls: urls) }
+    }
+}
+
 @Suite("書き出した動画の中身", .serialized)
 struct ExportOutputTests {
 
@@ -61,7 +84,7 @@ struct ExportOutputTests {
     @Test("クリップはキャンバス一杯（1920x1080）で書き出される")
     func clipIsRenderedAtCanvasSize() async throws {
         let source = try await TestVideoFactory.makeSolidColorVideo(seconds: 1)
-        let output = try await ExportWorker().processClip(makeClip(source: source), silent: true)
+        let output = try await ExportRunner().processClip(makeClip(source: source), silent: true)
         defer { TestVideoFactory.remove(source, output) }
 
         #expect(try await FrameInspector.displaySize(of: output) == canvas)
@@ -73,7 +96,7 @@ struct ExportOutputTests {
         // 使わない方式）。描画の作り替えで位置がずれたり、文字が丸ごと消えたりしても
         // これまでは誰も気付けなかった
         let source = try await TestVideoFactory.makeSolidColorVideo(seconds: 1)
-        let output = try await ExportWorker().processClip(makeClip(source: source), silent: true)
+        let output = try await ExportRunner().processClip(makeClip(source: source), silent: true)
         defer { TestVideoFactory.remove(source, output) }
 
         let frame = try await FrameInspector.frame(of: output, atSeconds: 0.5)
@@ -96,7 +119,7 @@ struct ExportOutputTests {
     func onlyTrimmedRangeIsExported() async throws {
         let source = try await TestVideoFactory.makeSolidColorVideo(seconds: 1)
         let clip   = makeClip(source: source, startMs: 200, endMs: 800)   // 0.6秒
-        let output = try await ExportWorker().processClip(clip, silent: true)
+        let output = try await ExportRunner().processClip(clip, silent: true)
         defer { TestVideoFactory.remove(source, output) }
 
         let duration = try await FrameInspector.durationSeconds(of: output)
@@ -106,7 +129,7 @@ struct ExportOutputTests {
     @Test("無音指定のクリップには音声トラックを持たせない")
     func silentClipHasNoAudioTrack() async throws {
         let source = try await TestVideoFactory.makeSolidColorVideo(seconds: 1)
-        let output = try await ExportWorker().processClip(makeClip(source: source), silent: true)
+        let output = try await ExportRunner().processClip(makeClip(source: source), silent: true)
         defer { TestVideoFactory.remove(source, output) }
 
         #expect(try await FrameInspector.hasAudioTrack(output) == false)
@@ -116,7 +139,7 @@ struct ExportOutputTests {
 
     @Test("タイトルカードは2秒・キャンバス一杯で、文言が中央に出る")
     func titleCardHasExpectedSizeAndText() async throws {
-        let output = try await ExportWorker().createTitleCard(titleText: "2026/09/22")
+        let output = try await ExportRunner().createTitleCard(titleText: "2026/09/22")
         defer { TestVideoFactory.remove(output) }
 
         #expect(try await FrameInspector.displaySize(of: output) == canvas)
@@ -135,7 +158,7 @@ struct ExportOutputTests {
     func titleCardFadesOut() async throws {
         // フェードはAndroid版と数式レベルで合わせてある（frame 30から20フレームかけて0へ）。
         // 1.9秒（frame 57）は完全に消えているはず
-        let output = try await ExportWorker().createTitleCard(titleText: "2026/09/22")
+        let output = try await ExportRunner().createTitleCard(titleText: "2026/09/22")
         defer { TestVideoFactory.remove(output) }
 
         let frame = try await FrameInspector.frame(of: output, atSeconds: 1.9)
@@ -147,11 +170,11 @@ struct ExportOutputTests {
 
     @Test("結合した動画の尺は、タイトルと各クリップの合計になる")
     func concatenatedDurationIsTheSum() async throws {
-        let worker = ExportWorker()
+        let runner = ExportRunner()
         let source = try await TestVideoFactory.makeSolidColorVideo(seconds: 1)
-        let title  = try await worker.createTitleCard(titleText: "2026/09/22")
-        let clip   = try await worker.processClip(makeClip(source: source), silent: true)
-        let merged = try await worker.concatenate(urls: [title, clip])
+        let title  = try await runner.createTitleCard(titleText: "2026/09/22")
+        let clip   = try await runner.processClip(makeClip(source: source), silent: true)
+        let merged = try await runner.concatenate(urls: [title, clip])
         defer { TestVideoFactory.remove(source, title, clip, merged) }
 
         let titleDuration  = try await FrameInspector.durationSeconds(of: title)
@@ -169,11 +192,11 @@ struct ExportOutputTests {
     func concatenationKeepsBurnedInText() async throws {
         // 結合はパススルー（無劣化の再多重化）を狙うが、互換が無ければ再エンコードに落ちる。
         // どちらの経路でも文字が消えないことを確かめる
-        let worker = ExportWorker()
+        let runner = ExportRunner()
         let source = try await TestVideoFactory.makeSolidColorVideo(seconds: 1)
-        let title  = try await worker.createTitleCard(titleText: "2026/09/22")
-        let clip   = try await worker.processClip(makeClip(source: source), silent: true)
-        let merged = try await worker.concatenate(urls: [title, clip])
+        let title  = try await runner.createTitleCard(titleText: "2026/09/22")
+        let clip   = try await runner.processClip(makeClip(source: source), silent: true)
+        let merged = try await runner.concatenate(urls: [title, clip])
         defer { TestVideoFactory.remove(source, title, clip, merged) }
 
         // タイトル（2秒）のあと、クリップの途中にあたる時刻を見る
