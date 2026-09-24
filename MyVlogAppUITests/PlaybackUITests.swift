@@ -138,4 +138,32 @@ final class PlaybackUITests: XCTestCase {
         XCTAssertEqual(after, stopped, "止まったはずなのに再生が続いている")
         attachScreenshot(app, name: "stopped_at_timeline_end")
     }
+
+    /// 前回の続きを復元して起動した直後も、プレビューに動画が読み込まれていて再生できる。
+    ///
+    /// 回帰テスト: 復元は画面ができる前に選択まで決めるので、「選択が変わったら読み込む」が
+    /// 最初の1回に呼ばれず、起動した直後のプレビューが黒いまま再生もできなかった。
+    /// ほかのテストは毎回空から動画を入れるので、この経路を通っていなかった
+    @MainActor
+    func testRestoredClipIsPlayableRightAfterLaunch() throws {
+        let first = launchApp(clipCount: 1, clipSeconds: 3)
+        // 自動保存（編集が止まってから0.5秒後）が書き終わるのを待ってから終える
+        RunLoop.current.run(until: Date().addingTimeInterval(2))
+        first.terminate()
+
+        let app = XCUIApplication()
+        app.launchArguments += ["-UITestSeedClips", "0", "-UITestKeepSavedState"]
+        app.launch()
+        XCTAssertTrue(
+            app.buttons["1本目のクリップ"].waitForExistence(timeout: 20),
+            "前回の続きが復元されていない"
+        )
+
+        preview(in: app).tap()
+        XCTAssertTrue(
+            waitUntil(timeout: 5) { (playheadMs(in: app) ?? 0) > 300 },
+            "起動した直後のプレビューで再生できない（再生位置 \(playheadMs(in: app) ?? -1)ms）"
+        )
+        attachScreenshot(app, name: "restored_and_playing")
+    }
 }

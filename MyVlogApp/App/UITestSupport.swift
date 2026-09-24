@@ -44,6 +44,10 @@ enum UITestSupport {
     /// 既定は短め。トリムのテストのように「切った長さと元の長さの違い」を見たいときだけ長くする
     private static let secondsArgument = "-UITestSeedClipSeconds"
 
+    /// 使い捨ての保存領域を、起動時に空にしないで使う起動引数。前回の起動で保存した内容から
+    /// 始めたいテスト（前回の続きの復元）で、`-UITestSeedClips 0`と一緒に渡す
+    private static let keepSavedStateArgument = "-UITestKeepSavedState"
+
     /// 起動引数が1つでもあれば、保存先を使い捨てにする目印として使う
     private static var isUITestRun: Bool {
         ProcessInfo.processInfo.arguments.contains(seedArgument)
@@ -79,8 +83,10 @@ enum UITestSupport {
     static func disposableDefaults() -> UserDefaults? {
         guard isUITestRun else { return nil }
         let name = "com.masamune.myvlogapp.uitest"
-        // 前回のテスト実行が残した内容を消してから始める
-        UserDefaults.standard.removePersistentDomain(forName: name)
+        // 前回のテスト実行が残した内容を消してから始める（前回の続きを確かめるテストでは残す）
+        if !ProcessInfo.processInfo.arguments.contains(keepSavedStateArgument) {
+            UserDefaults.standard.removePersistentDomain(forName: name)
+        }
         return UserDefaults(suiteName: name)
     }
 

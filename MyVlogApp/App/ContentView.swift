@@ -119,7 +119,11 @@ struct ContentView: View {
         // 同じ番号のまま次のクリップを指す、一時保存の読み出しで0→0になる）、
         // indexで見ていると消えたクリップがAVPlayerに載ったまま再生され続けていた。
         // 波形（WaveformView）が元々.task(id: store.selectedClip?.id)で駆動しているのと揃える。
-        .onChange(of: store.selectedClip?.id) { _, _ in
+        //
+        // 最初の1回（画面が出たとき）も呼ぶ。前回の続きの復元は画面ができる前（VlogStoreのinit）に
+        // 選択まで決めてしまうので、変化としては届かない。呼ばないと、起動した直後のプレビューが
+        // 黒いまま動画が読み込まれず、タイルを選び直すまで再生もできなかった
+        .onChange(of: store.selectedClip?.id, initial: true) { _, _ in
             if let clip = store.selectedClip {
                 playerManager.loadClip(clip)
             } else {
