@@ -4,6 +4,7 @@ import UIKit
 struct TextInputView: View {
     @Environment(VlogStore.self) private var store
     @Environment(VideoPlayerManager.self) private var playerManager
+    @Environment(ExportManager.self) private var exportManager
     @Environment(\.colorScheme) var colorScheme
 
     @State private var text:         String = ""
@@ -37,6 +38,9 @@ struct TextInputView: View {
                 // 開かない」問題を根本的に解消する。
                 NativeTextView(
                     text: $text,
+                    // クリップが無いときと書き出し中は打たせない（Android: EditorPane の enabled）。
+                    // 以前はクリップが無くても打てて、打った文字はどこにも入らずに残っていた
+                    isEnabled: store.selectedClip != nil && !exportManager.isExporting,
                     // 未入力のときだけ「ひとこと」をグレーで案内表示する。見た目だけで、
                     // 実際の値は空文字のまま（プレビュー・書き出しには何も焼き込まれない）
                     placeholder: TextSegment.defaultText,
@@ -128,6 +132,7 @@ struct TextInputView: View {
 
 struct NativeTextView: UIViewRepresentable {
     @Binding var text: String
+    var isEnabled: Bool = true
     var placeholder: String
     var onBeginEditing: (() -> Void)? = nil
     var onEndEditing: (() -> Void)? = nil
@@ -223,6 +228,13 @@ struct NativeTextView: UIViewRepresentable {
 
     func updateUIView(_ uiView: EagerFirstResponderTextView, context: Context) {
         context.coordinator.parent = self
+        if uiView.isEditable != isEnabled {
+            // 打っている途中で書き出しが始まったら、入力欄から抜ける
+            if !isEnabled, uiView.isFirstResponder { uiView.resignFirstResponder() }
+            uiView.isEditable   = isEnabled
+            uiView.isSelectable = isEnabled
+            uiView.alpha        = isEnabled ? 1 : 0.5
+        }
         if uiView.text != text {
             uiView.text = text
             context.coordinator.placeholderLabel?.isHidden = uiView.isFirstResponder || !text.isEmpty
@@ -241,7 +253,8 @@ struct NativeTextView: UIViewRepresentable {
 final class EagerFirstResponderTextView: UITextView {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesBegan(touches, with: event)
-        if !isFirstResponder {
+        // 打たせないとき（クリップが無い・書き出し中）はキーボードを出さない
+        if isEditable, !isFirstResponder {
             _ = becomeFirstResponder()
         }
     }

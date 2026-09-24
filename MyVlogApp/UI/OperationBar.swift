@@ -5,6 +5,7 @@ import SwiftUI
 struct OperationBar: View {
     @Environment(VlogStore.self) private var store
     @Environment(VideoPlayerManager.self) private var playerManager
+    @Environment(ExportManager.self) private var exportManager
 
     @Environment(\.colorScheme) var colorScheme
     /// 中のボタンが文字サイズ設定で伸びるので、操作バーの高さも一緒に伸ばす
@@ -15,7 +16,11 @@ struct OperationBar: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: true) {
             HStack(spacing: 0) {
-                let enabled = store.selectedClip != nil
+                // 書き出し中は編集させない（Android: TimelineToolbar の !isExporting）。書き出すのは
+                // 押した時点の内容なので壊れはしないが、画面の編集と出来上がる動画が食い違って見える
+                let editable = !exportManager.isExporting
+                let hasClips = !store.clips.isEmpty && editable
+                let enabled = store.selectedClip != nil && editable
                 let trimPresetEnabled = enabled && (store.selectedClip?.durationMs ?? 0) > 0
 
                 // タップ＝選択中のクリップだけ削除、長押し＝すべて削除。
@@ -35,12 +40,12 @@ struct OperationBar: View {
                 divider
 
                 CompactIconButton(systemImage: "arrow.left", contentDescription: "ひとつ前へ移動",
-                                   enabled: canMoveLeft) {
+                                   enabled: canMoveLeft && editable) {
                     playerManager.pause()
                     withAnimation { store.moveClipLeft() }
                 }
                 CompactIconButton(systemImage: "arrow.right", contentDescription: "ひとつ後ろへ移動",
-                                   enabled: canMoveRight) {
+                                   enabled: canMoveRight && editable) {
                     playerManager.pause()
                     withAnimation { store.moveClipRight() }
                 }
@@ -53,7 +58,7 @@ struct OperationBar: View {
                     contentDescription: store.timelineMuted
                         ? "タイムラインのミュート：オン（プレビューと書き出しの音を消します）"
                         : "タイムラインのミュート：オフ",
-                    enabled: !store.clips.isEmpty
+                    enabled: hasClips
                 ) { store.toggleTimelineMuted() }
 
                 ToggleIconButton(
@@ -62,19 +67,19 @@ struct OperationBar: View {
                     contentDescription: store.isContinuousPlay
                         ? "連続再生：オン（終わったら次のクリップへ進みます）"
                         : "連続再生：オフ（クリップの終わりで止まります）",
-                    enabled: !store.clips.isEmpty
+                    enabled: hasClips
                 ) { store.toggleContinuousPlay() }
 
                 divider
 
                 CompactIconButton(systemImage: "arrow.uturn.backward", contentDescription: "もとに戻す",
-                                   enabled: store.canUndo) {
+                                   enabled: store.canUndo && editable) {
                     store.undo()
                     // 止めて、選択中のクリップの頭を出す（Android: applySnapshot）
                     playerManager.showSelectedClipStart()
                 }
                 CompactIconButton(systemImage: "arrow.uturn.forward", contentDescription: "やり直す",
-                                   enabled: store.canRedo) {
+                                   enabled: store.canRedo && editable) {
                     store.redo()
                     playerManager.showSelectedClipStart()
                 }
@@ -93,9 +98,13 @@ struct OperationBar: View {
 
                 divider
 
-                SplitButton()
+                SplitButton(enabled: enabled)
             }
         }
+        // 収まりきらないときは、右端（よく使う2s/4sと分割）が見えた状態から始める。左端から始めると、
+        // 押し間違えが怖い削除が見えていて、よく使う分割は横にずらさないと出てこなかった
+        // （Android 0c56399。iPhoneの縦画面ではボタンが画面幅に収まらない）
+        .defaultScrollAnchor(.trailing)
         .frame(height: barHeight)
     }
 
@@ -124,6 +133,9 @@ struct OperationBar: View {
 /// 操作バー全体（ボタン10個ぶん）を依存として記録し、再生中ずっと毎秒30回
 /// 作り直される（Android版が`derivedStateOf`で「区切りの上か」だけに絞っているのと同じ狙い）。
 private struct SplitButton: View {
+    /// 選択中のクリップがあり、書き出し中でないか（操作バーのほかのボタンと同じ判断）
+    let enabled: Bool
+
     @Environment(VlogStore.self) private var store
     @Environment(VideoPlayerManager.self) private var playerManager
     @Environment(\.colorScheme) private var colorScheme
@@ -134,7 +146,6 @@ private struct SplitButton: View {
     var body: some View {
         let posMs   = playerManager.currentTimeMs
         let isNear  = store.selectedClip?.splitPointNear(positionMs: posMs) != nil
-        let enabled = store.selectedIndex != nil
         let tint    = AppColors.splitLine(colorScheme)
 
         Button {

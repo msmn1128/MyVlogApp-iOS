@@ -5,6 +5,7 @@ struct WaveformView: View {
     // store/playerManagerはWaveformGestures.swiftのextensionからも使うためprivateを外してある
     @Environment(VlogStore.self) var store
     @Environment(VideoPlayerManager.self) var playerManager
+    @Environment(ExportManager.self) private var exportManager
     @Environment(\.colorScheme) var colorScheme
 
     /// nilは「取得できなかった」。読み込み中かどうかはisLoadingで別に持つ
@@ -157,6 +158,8 @@ struct WaveformView: View {
                     .onChanged { v in onDragChange(v, size: sz) }
                     .onEnded   { v in onDragEnd(v, size: sz) }
             )
+            // 書き出し中はトリムも区切りも動かさせない（Android: WaveformTrimmer の enabled）
+            .allowsHitTesting(!exportManager.isExporting)
             // 波形はCanvasで描いているので、つまみも区切りも再生ヘッドも
             // VoiceOverからは一切見えない（Canvasは中の要素を支援技術へ出さない）。
             // 同じ操作を「調整できる項目」として別に用意する（accessibilityControls）
@@ -181,7 +184,7 @@ struct WaveformView: View {
     /// ドラッグでしかできなかったトリムと頭出しを、上下スワイプ（調整）で行えるようにする。
     @ViewBuilder
     private var accessibilityControls: some View {
-        if let clip = store.selectedClip {
+        if let clip = store.selectedClip, !exportManager.isExporting {
             VStack {
                 Color.clear
                     .accessibilityElement()
