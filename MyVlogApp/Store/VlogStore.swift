@@ -267,11 +267,16 @@ final class VlogStore {
         }
     }
 
-    /// 先頭から指定の長さだけトリムする（Android: applyTrimPreset）
+    /// いまのトリム選択の始まりから、指定の長さだけを選び直す（操作バーの 2s / 4s。Android: applyTrimPreset）。
+    ///
+    /// 動画の終わりに収まらないときは、始まりを手前へずらして指定の長さを確保する
+    /// （動画がそれより短いときは動画全体）。終わりで切っていた頃は、終わり近くで押すと
+    /// 「2s」なのに0.5秒になるなど、知らせもなく指定より短くなっていた。
     func applyTrimPreset(lengthMs: Int64) {
         guard let clip = selectedClip, clip.durationMs > 0 else { return }
-        let startMs = min(max(clip.startMs, 0), clip.durationMs)
-        updateTrim(startMs: startMs, endMs: min(startMs + lengthMs, clip.durationMs))
+        let length  = min(lengthMs, clip.durationMs)
+        let startMs = min(max(clip.startMs, 0), clip.durationMs - length)
+        updateTrim(startMs: startMs, endMs: startMs + length)
     }
 
     /// トリミング区間を長さそのままで前後に移動する（Android: moveTrim）。

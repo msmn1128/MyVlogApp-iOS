@@ -208,6 +208,37 @@ struct VlogStoreEditingTests {
         #expect(!store.canUndo)
     }
 
+    @Test("2s/4sは、いまの始まりから指定の長さを選ぶ")
+    func trimPresetKeepsTheCurrentStartWhenItFits() {
+        let store = makeStore()
+        store.addClips([TestClip.make(durationMs: 10_000, startMs: 3_000, endMs: 9_000)])
+
+        store.applyTrimPreset(lengthMs: 2_000)
+
+        #expect(store.selectedClip?.trimBounds == TrimBounds(startMs: 3_000, endMs: 5_000))
+    }
+
+    @Test("動画の終わり近くで2sを押しても短くならず、始まりを手前へずらす")
+    func trimPresetNearTheEndMovesTheStartBack() {
+        // 回帰テスト: 終わりで切っていた頃は、残り0.5秒のところで「2s」を押すと0.5秒になっていた
+        let store = makeStore()
+        store.addClips([TestClip.make(durationMs: 10_000, startMs: 9_500, endMs: 10_000)])
+
+        store.applyTrimPreset(lengthMs: 2_000)
+
+        #expect(store.selectedClip?.trimBounds == TrimBounds(startMs: 8_000, endMs: 10_000))
+    }
+
+    @Test("動画より長いプリセットは、動画全体を選ぶ")
+    func trimPresetLongerThanTheVideoSelectsTheWholeVideo() {
+        let store = makeStore()
+        store.addClips([TestClip.make(durationMs: 1_500, startMs: 500, endMs: 1_500)])
+
+        store.applyTrimPreset(lengthMs: 4_000)
+
+        #expect(store.selectedClip?.trimBounds == TrimBounds(startMs: 0, endMs: 1_500))
+    }
+
     @Test("区間ごと移動でトリムより手前の区切りが潰れない")
     func moveTrimKeepsSplitSpacing() {
         // TimelineShiftTests と同じ回帰を、実際に使われる経路（store）で確かめる
