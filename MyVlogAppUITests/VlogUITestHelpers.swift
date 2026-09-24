@@ -102,6 +102,10 @@ extension XCTestCase {
         XCTAssertTrue(toggle.waitForExistence(timeout: 5), "連続再生トグルが見つからない")
         if toggle.value as? String == target { return }
         toggle.tap()
+        // シミュレータが重いと、起動直後のタップが届かないことがある。変わっていなければもう一度押す
+        if !waitUntil(timeout: 3, { toggle.value as? String == target }) {
+            toggle.tap()
+        }
         XCTAssertTrue(
             waitUntil(timeout: 5) { toggle.value as? String == target },
             "連続再生を\(target)にできなかった"

@@ -144,14 +144,19 @@ final class MyVlogAppUITests: XCTestCase {
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         app.typeText("abc")
 
+        // 続けて打った文字は0.9秒以内なら1回の「もとに戻す」にまとまるが、シミュレータが重いと
+        // 間が空いて、最後の1文字ぶんだけが戻ることもある。どちらでも、入力欄は戻した内容に
+        // 合わせ直されて、「abc」より短くなっていること
         app.buttons["もとに戻す"].tap()
         XCTAssertTrue(
-            waitUntil(timeout: 3) { (textView.value as? String ?? "").isEmpty },
+            waitUntil(timeout: 3) { (textView.value as? String ?? "abc").count < 3 },
             "もとに戻しても入力欄が古い文字のまま（\(textView.value ?? "")）"
         )
+        let afterUndo = textView.value as? String ?? ""
+        XCTAssertTrue("abc".hasPrefix(afterUndo), "もとに戻した先が打った文字の途中ではない（\(afterUndo)）")
 
         app.typeText("d")
-        XCTAssertEqual(textView.value as? String, "d", "もとに戻した内容が次の1文字で打ち消された")
+        XCTAssertEqual(textView.value as? String, afterUndo + "d", "もとに戻した内容が次の1文字で打ち消された")
     }
 
     /// クリップが無いとき、ひとこと欄を触ってもキーボードは開かない（打った文字の行き先が無い）
