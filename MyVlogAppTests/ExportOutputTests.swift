@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreGraphics
+import UIKit
 import Testing
 @testable import MyVlogApp
 
@@ -133,6 +134,72 @@ struct ExportOutputTests {
         defer { TestVideoFactory.remove(source, output) }
 
         #expect(try await FrameInspector.hasAudioTrack(output) == false)
+    }
+
+    // MARK: - 色（HDR → SDR）
+
+    /// 書き出した動画の1コマ（ひとことの位置）の色と、元の動画をシステムが表示したときの色を比べる。
+    /// ひとことは空にして、映像そのものの色だけを見る
+    private func colorsAfterExport(of source: URL) async throws -> (output: (r: Double, g: Double, b: Double), source: (r: Double, g: Double, b: Double)) {
+        let output = try await ExportRunner().processClip(makeClip(source: source, text: ""), silent: true)
+        defer { TestVideoFactory.remove(output) }
+        let exported = try await FrameInspector.frame(of: output, atSeconds: 0.5)
+        let original = try await FrameInspector.frame(of: source, atSeconds: 0.5)
+        return (
+            FrameInspector.meanRGB(exported, in: Region.hitokoto),
+            FrameInspector.meanRGB(original, in: CGRect(x: 100, y: 100, width: 50, height: 50))
+        )
+    }
+
+    private func isClose(
+        _ a: (r: Double, g: Double, b: Double), _ b: (r: Double, g: Double, b: Double), within tolerance: Double
+    ) -> Bool {
+        abs(a.r - b.r) <= tolerance && abs(a.g - b.g) <= tolerance && abs(a.b - b.b) <= tolerance
+    }
+
+    @Test("SDRの動画は、元の色のまま書き出される")
+    func sdrColorsArePreserved() async throws {
+        // 回帰テスト: 合成と出力の色空間を決めていなかった頃は、変換式の食い違いで
+        // 元の(73,149,88)が(65,151,87)のようにずれていた
+        let source = try await TestVideoFactory.makeSolidColorVideo(
+            seconds: 1, color: UIColor(red: 0.2, green: 0.5, blue: 0.3, alpha: 1)
+        )
+        defer { TestVideoFactory.remove(source) }
+
+        let colors = try await colorsAfterExport(of: source)
+        #expect(isClose(colors.output, colors.source, within: 6), "出力 \(colors.output) / 元 \(colors.source)")
+    }
+
+    @Test("HLG（HDR）の動画は、SDRへ変換して書き出される")
+    func hlgIsConvertedToSdr() async throws {
+        // 回帰テスト: 以前はHLGの値をほぼSDRのまま扱い、システムが表示する色(0,107,53)に対して
+        // (62,143,86)と白っぽく色が抜けていた（Android: Hdr.kt と同じ問題）
+        let source = try await TestVideoFactory.makeSolidColorVideo(
+            seconds: 1, color: UIColor(red: 0.2, green: 0.5, blue: 0.3, alpha: 1),
+            colorProperties: TestVideoFactory.hlgColorProperties
+        )
+        defer { TestVideoFactory.remove(source) }
+
+        let colors = try await colorsAfterExport(of: source)
+        #expect(isClose(colors.output, colors.source, within: 14), "出力 \(colors.output) / 元 \(colors.source)")
+    }
+
+    @Test("書き出した動画にはBT.709の色空間の情報が付いている")
+    func outputIsTaggedAsRec709() async throws {
+        // 付けないと再生する側が変換式を推測し、BT.601と取られると色がずれる（Android: videoEncodeArgs）
+        let source = try await TestVideoFactory.makeSolidColorVideo(seconds: 1)
+        let output = try await ExportRunner().processClip(makeClip(source: source), silent: true)
+        defer { TestVideoFactory.remove(source, output) }
+
+        let track = try #require(try await AVURLAsset(url: output).loadTracks(withMediaType: .video).first)
+        let format = try #require(try await track.load(.formatDescriptions).first)
+        let extensions = CMFormatDescriptionGetExtensions(format) as? [String: Any] ?? [:]
+        #expect(extensions[kCMFormatDescriptionExtension_ColorPrimaries as String] as? String
+                == kCMFormatDescriptionColorPrimaries_ITU_R_709_2 as String)
+        #expect(extensions[kCMFormatDescriptionExtension_TransferFunction as String] as? String
+                == kCMFormatDescriptionTransferFunction_ITU_R_709_2 as String)
+        #expect(extensions[kCMFormatDescriptionExtension_YCbCrMatrix as String] as? String
+                == kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2 as String)
     }
 
     // MARK: - タイトルカード

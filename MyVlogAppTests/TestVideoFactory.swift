@@ -56,7 +56,8 @@ nonisolated enum TestVideoFactory {
         seconds: Double = 1,
         size: CGSize = CGSize(width: 320, height: 240),
         fps: Int32 = 30,
-        color: UIColor = UIColor(white: 0.12, alpha: 1)
+        color: UIColor = UIColor(white: 0.12, alpha: 1),
+        colorProperties: [String: String]? = nil
     ) async throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("exporttest_\(UUID().uuidString).mov")
@@ -68,7 +69,7 @@ nonisolated enum TestVideoFactory {
                 AVVideoCodecKey:  AVVideoCodecType.h264,
                 AVVideoWidthKey:  Int(size.width),
                 AVVideoHeightKey: Int(size.height)
-            ]
+            ].merging(colorProperties.map { [AVVideoColorPropertiesKey: $0] } ?? [:]) { $1 }
         )
         input.expectsMediaDataInRealTime = false
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(
@@ -98,6 +99,13 @@ nonisolated enum TestVideoFactory {
         guard writer.status == .completed else { throw writer.error ?? TestVideoError.writerFailed }
         return url
     }
+
+    /// HLG（HDR）の印を付けた動画を作るときの色の設定。中身の画素は同じまま、印だけが変わる
+    static let hlgColorProperties: [String: String] = [
+        AVVideoColorPrimariesKey:     AVVideoColorPrimaries_ITU_R_2020,
+        AVVideoTransferFunctionKey:   AVVideoTransferFunction_ITU_R_2100_HLG,
+        AVVideoYCbCrMatrixKey:        AVVideoYCbCrMatrix_ITU_R_2020
+    ]
 
     static func remove(_ urls: URL?...) {
         for url in urls.compactMap({ $0 }) {
@@ -162,6 +170,34 @@ nonisolated enum FrameInspector {
 
     static func hasAudioTrack(_ url: URL) async throws -> Bool {
         try await !AVURLAsset(url: url).loadTracks(withMediaType: .audio).isEmpty
+    }
+
+    /// `rect`（左上原点）の中の、RGBそれぞれの平均（0〜255）
+    static func meanRGB(_ image: CGImage, in rect: CGRect) -> (r: Double, g: Double, b: Double) {
+        let width  = image.width
+        let height = image.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(
+            data: &pixels,
+            width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return (0, 0, 0) }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        let minX = max(0, Int(rect.minX)), maxX = min(width,  Int(rect.maxX))
+        let minY = max(0, Int(rect.minY)), maxY = min(height, Int(rect.maxY))
+        guard minX < maxX, minY < maxY else { return (0, 0, 0) }
+        var sum = (r: 0.0, g: 0.0, b: 0.0)
+        for y in minY..<maxY {
+            for x in minX..<maxX {
+                let i = (y * width + x) * 4
+                sum.r += Double(pixels[i]); sum.g += Double(pixels[i + 1]); sum.b += Double(pixels[i + 2])
+            }
+        }
+        let n = Double((maxX - minX) * (maxY - minY))
+        return (sum.r / n, sum.g / n, sum.b / n)
     }
 
     /// `rect`（左上原点）の中で、明るいピクセルがいくつあるか。

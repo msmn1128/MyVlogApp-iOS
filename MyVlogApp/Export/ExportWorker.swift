@@ -218,13 +218,29 @@ actor ExportWorker {
 
     /// createTitleCard(ExportWorker+TitleCard.swift)/makeClipWriterで共通のAVAssetWriterInput設定。
     /// ファイルをまたいで参照するためinternal
+    ///
+    /// - ビットレートは明示する（Android: MEDIACODEC_BITRATE_BPS と同じ12Mbps）。任せていると端末や
+    ///   素材で変わり、書き出し前の空き容量の見積もり（ExportSpace）とも合わなくなる
+    /// - 出力にBT.709の色空間の情報を付ける（Android: videoEncodeArgs）。付けないと再生する側が
+    ///   変換式を推測し、BT.601と取られると色がずれる
     static func h264Settings(canvas: CGSize) -> [String: Any] {
         [
             AVVideoCodecKey:  AVVideoCodecType.h264,
             AVVideoWidthKey:  Int(canvas.width),
-            AVVideoHeightKey: Int(canvas.height)
+            AVVideoHeightKey: Int(canvas.height),
+            AVVideoCompressionPropertiesKey: [
+                AVVideoAverageBitRateKey: ExportSpace.videoBitRate
+            ],
+            AVVideoColorPropertiesKey: rec709ColorProperties
         ]
     }
+
+    /// BT.709（SDRの標準）の色空間の情報。書き出しの出力と、読み取り側の変換先の両方に使う
+    static let rec709ColorProperties: [String: String] = [
+        AVVideoColorPrimariesKey:   AVVideoColorPrimaries_ITU_R_709_2,
+        AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+        AVVideoYCbCrMatrixKey:      AVVideoYCbCrMatrix_ITU_R_709_2
+    ]
 
     /// createTitleCard(ExportWorker+TitleCard.swift)/makeClipWriterで共通の
     /// AVAssetWriterInputPixelBufferAdaptor設定。ファイルをまたいで参照するためinternal
@@ -269,6 +285,12 @@ actor ExportWorker {
         videoComp.renderSize    = canvas
         videoComp.frameDuration = CMTime(value: 1, timescale: 30)
         videoComp.instructions  = [instruction]
+        // 合成の色空間をBT.709（SDR）に決める。HDR（HLG・PQ）の素材は、AVFoundationがここへ
+        // トーンマッピングしてから渡してくる（Android: Hdr.kt で zscale/tonemap しているのに当たる）。
+        // 決めていないと、素材や端末しだいの色空間のまま8bitへ落とされ、白っぽく色が抜けうる
+        videoComp.colorPrimaries        = AVVideoColorPrimaries_ITU_R_709_2
+        videoComp.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
+        videoComp.colorYCbCrMatrix      = AVVideoYCbCrMatrix_ITU_R_709_2
         return videoComp
     }
 
