@@ -11,7 +11,8 @@ import Foundation
 nonisolated enum ExportSpace {
     /// 映像のビットレート（ExportWorker.h264Settings と同じ値）。Android の MEDIACODEC_BITRATE_BPS と同じ
     static let videoBitRate: Int64 = 12_000_000
-    /// 音声のビットレートの見込み（Android: AUDIO_BITRATE_BPS）。音声は素材のまま結合するので目安
+    /// 音声のビットレート（Android: AUDIO_BITRATE_BPS）。結合のときに音声をこの値のAACへ1回変換する
+    /// （ExportWorker.mergedAACSettings）ので、見積もりにも書き出しにもこの値を使う
     static let audioBitRate: Int64 = 128_000
     /// 見積もりに足す余裕。タイトルカードなどの細かいファイルと、見積もりの誤差のぶん
     static let marginBytes: Int64 = 200 * 1024 * 1024
