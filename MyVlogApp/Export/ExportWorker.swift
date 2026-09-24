@@ -92,7 +92,13 @@ actor ExportWorker {
         let (writer, writerInput, adaptor) = try makeClipWriter(to: outURL, canvas: canvas)
 
         guard reader.startReading() else { throw reader.error ?? ExportError.sessionCreationFailed }
-        writer.startWriting()
+        // 書き始められなかったら（ファイルを作れない・空き容量が無いなど）、その場で断る。
+        // 見ていなかった頃は、書けないまま1本ぶん全部のコマを読んで合成してから失敗していた
+        guard writer.startWriting() else {
+            reader.cancelReading()
+            try? FileManager.default.removeItem(at: outURL)
+            throw writer.error ?? ExportError.sessionCreationFailed
+        }
         writer.startSession(atSourceTime: .zero)
 
         // キャプション画像は区間ごとに1枚だけ作ってループの外に置く。
@@ -128,7 +134,12 @@ actor ExportWorker {
                     source: srcBuffer, destination: destBuffer, canvas: canvas,
                     positionMs: relativeMs, overlays: overlays
                 )
-                adaptor.append(destBuffer, withPresentationTime: relativeTime)
+                // 書き込めなかったら（途中で空き容量が尽きたなど）、その場で止める。書き手は失敗したあとも
+                // 「受け取れる」と答え続けるので、結果を見ないと残りのコマを全部読んで合成してから、
+                // 最後にやっと失敗が分かっていた（長い4Kのクリップでは何分も待たせてから「容量不足」と出る）
+                guard adaptor.append(destBuffer, withPresentationTime: relativeTime) else {
+                    throw writer.error ?? ExportError.sessionCreationFailed
+                }
 
                 // 1%刻みでだけ知らせる。毎フレーム呼ぶと、受け取る側（@MainActorのExportManager）への
                 // ホップが30fps×尺ぶん積み上がって、書き出し自体より重くなりかねない
@@ -452,7 +463,11 @@ actor ExportWorker {
         }
 
         guard reader.startReading() else { throw reader.error ?? ExportError.sessionCreationFailed }
-        guard writer.startWriting() else { throw writer.error ?? ExportError.sessionCreationFailed }
+        guard writer.startWriting() else {
+            // 読み手は始めてしまっているので畳む（畳まないとデコーダとファイルを掴んだまま残る）
+            reader.cancelReading()
+            throw writer.error ?? ExportError.sessionCreationFailed
+        }
         writer.startSession(atSourceTime: .zero)
 
         // 映像と音声は、それぞれ書き手が受け取れる分だけ交互に流す。片方だけ先に流し切ろうとすると、

@@ -259,7 +259,9 @@ final class ExportManager {
                 // weak selfのまま内側のTaskへ持ち込むと「varのキャプチャ」になる
                 // （Swift 6モードではエラー）。先に取り出してから渡す
                 guard let self else { return }
-                Task { @MainActor in self.progress = base + fraction * span }
+                // 戻しはしない。この知らせは画面側へあとから届くので、クリップを書き終えて次の区切りまで
+                // 進めた（下のprogressの代入）あとに、そのクリップの途中の値が遅れて届くことがある
+                Task { @MainActor in self.progress = max(self.progress, base + fraction * span) }
             }
             clipURLs.append(url)
             tempFiles.append(url)

@@ -26,7 +26,11 @@ extension ExportWorker {
             sourcePixelBufferAttributes: Self.pixelBufferAttributes(canvas: size)
         )
         writer.add(input)
-        writer.startWriting()
+        // 書き始められなかったら、その場で断る（ExportWorker.renderClipVideoWithTextと同じ）
+        guard writer.startWriting() else {
+            try? FileManager.default.removeItem(at: url)
+            throw writer.error ?? ExportError.sessionCreationFailed
+        }
         writer.startSession(atSourceTime: .zero)
 
         // 空白だけの行は詰める（Android: titleLines）。以前は空の行だけを詰めていたので、
@@ -38,7 +42,10 @@ extension ExportWorker {
                 try await waitUntilReady(input)
                 let t = CMTime(value: CMTimeValue(frameIdx), timescale: fps)
                 if let buffer = renderTitleFrame(size: size, frame: frameIdx, total: totalFrames, titleLines: titleLines) {
-                    adaptor.append(buffer, withPresentationTime: t)
+                    // 書き込めなかったら（空き容量が尽きたなど）その場で止める（renderClipVideoWithTextと同じ）
+                    guard adaptor.append(buffer, withPresentationTime: t) else {
+                        throw writer.error ?? ExportError.sessionCreationFailed
+                    }
                 }
             }
             input.markAsFinished()
