@@ -92,7 +92,16 @@ struct TextInputView: View {
         // 必要なのは選択中クリップのtextsだけなので、そこへ絞る
         // （ContentView.swiftが同じ理由でisEmpty/isMutedへ絞っているのと同じ方針）。
         .onChange(of: store.selectedClip?.texts) {
-            if !isEditing { syncText() }
+            if !isEditing { syncText(); return }
+            // 打っている最中でも、外から変わったとき（キーボードを出したままの「もとに戻す」「やり直す」）は
+            // 入力欄を合わせ直す。打った文字はその場で保存側へ流しているので、保存側と入力欄が
+            // 食い違うのは外から変わったときだけ。合わせないと入力欄に戻す前の文字が残り、次の1文字で
+            // それが丸ごと書き戻されて「もとに戻す」が打ち消されていた。区切りが減って編集中の区間が
+            // 無くなった場合は、打った文字がどこにも入らず捨てられていた（Android: EditorPane）
+            guard let clip = store.selectedClip else { return }
+            if !clip.texts.indices.contains(segmentIndex) || clip.texts[segmentIndex].text != text {
+                syncText(force: true)
+            }
         }
         .onAppear { syncText() }
         // 打っている間は再生させない。入力を始めたら止める（onBeginEditing）だけでは、
@@ -107,8 +116,9 @@ struct TextInputView: View {
         }
     }
 
-    private func syncText() {
-        guard !isEditing else { return }
+    /// - Parameter force: 打っている最中でも合わせ直す（外から変わったとき）
+    private func syncText(force: Bool = false) {
+        guard force || !isEditing else { return }
         guard let clip = store.selectedClip else { text = ""; return }
         let pos = playerManager.currentTimeMs
         segmentIndex = clip.textIndexAt(positionMs: pos)

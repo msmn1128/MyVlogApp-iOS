@@ -132,6 +132,28 @@ final class MyVlogAppUITests: XCTestCase {
         attachScreenshot(app, name: "license")
     }
 
+    /// キーボードを出したまま「もとに戻す」を押すと、入力欄も戻り、続けて打っても戻した内容を打ち消さない。
+    ///
+    /// 回帰テスト: 打っている最中は外からの変化を入力欄へ合わせていなかったので、入力欄に戻す前の
+    /// 文字が残り、次の1文字でそれが丸ごと書き戻されていた
+    @MainActor
+    func testUndoWhileTypingIsNotOverwritten() throws {
+        let app = launchApp(clipCount: 1)
+        let textView = app.textViews.firstMatch
+        textView.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        app.typeText("abc")
+
+        app.buttons["もとに戻す"].tap()
+        XCTAssertTrue(
+            waitUntil(timeout: 3) { (textView.value as? String ?? "").isEmpty },
+            "もとに戻しても入力欄が古い文字のまま（\(textView.value ?? "")）"
+        )
+
+        app.typeText("d")
+        XCTAssertEqual(textView.value as? String, "d", "もとに戻した内容が次の1文字で打ち消された")
+    }
+
     /// クリップが無いとき、ひとこと欄を触ってもキーボードは開かない（打った文字の行き先が無い）
     @MainActor
     func testHitokotoIsNotEditableWithoutClips() throws {
