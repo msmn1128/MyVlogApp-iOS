@@ -100,6 +100,104 @@ nonisolated enum TestVideoFactory {
         return url
     }
 
+    /// 映像と長さの違う音声（440Hzの音）を持つ動画を作る。音声の長さだけを映像とずらしたいときに使う
+    /// （素材の音声は映像より数十ms短いことがあり、その扱いを確かめるため）。
+    static func makeVideoWithAudio(videoSeconds: Double, audioSeconds: Double) async throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("exporttest_audio_\(UUID().uuidString).mov")
+        let size = CGSize(width: 320, height: 240)
+        let fps: Int32 = 30
+        let sampleRate = 44_100.0
+
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let video = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: Int(size.width), AVVideoHeightKey: Int(size.height)
+        ])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: video, sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: Int(size.width), kCVPixelBufferHeightKey as String: Int(size.height)
+        ])
+        let audio = AVAssetWriterInput(mediaType: .audio, outputSettings: [
+            AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64_000
+        ])
+        video.expectsMediaDataInRealTime = false
+        audio.expectsMediaDataInRealTime = false
+        writer.add(video)
+        writer.add(audio)
+        guard writer.startWriting() else { throw writer.error ?? TestVideoError.writerFailed }
+        writer.startSession(atSourceTime: .zero)
+
+        for frame in 0..<Int(videoSeconds * Double(fps)) {
+            while !video.isReadyForMoreMediaData { await Task.yield() }
+            guard let pool = adaptor.pixelBufferPool else { throw TestVideoError.writerFailed }
+            var pixelBuffer: CVPixelBuffer?
+            CVPixelBufferPoolCreatePixelBuffer(nil, pool, &pixelBuffer)
+            guard let buffer = pixelBuffer else { throw TestVideoError.writerFailed }
+            fill(buffer, with: UIColor(white: 0.12, alpha: 1))
+            adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: fps))
+        }
+        video.markAsFinished()
+
+        // 1024サンプルずつ、16bitのPCMで渡す（AACへはwriterが変換する）
+        var format = AudioStreamBasicDescription(
+            mSampleRate: sampleRate, mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kLinearPCMFormatFlagIsSignedInteger | kLinearPCMFormatFlagIsPacked,
+            mBytesPerPacket: 2, mFramesPerPacket: 1, mBytesPerFrame: 2, mChannelsPerFrame: 1,
+            mBitsPerChannel: 16, mReserved: 0
+        )
+        var formatDescription: CMAudioFormatDescription?
+        CMAudioFormatDescriptionCreate(
+            allocator: nil, asbd: &format, layoutSize: 0, layout: nil, magicCookieSize: 0,
+            magicCookie: nil, extensions: nil, formatDescriptionOut: &formatDescription
+        )
+        let totalFrames = Int(audioSeconds * sampleRate)
+        var written = 0
+        while written < totalFrames {
+            while !audio.isReadyForMoreMediaData { await Task.yield() }
+            let count = min(1024, totalFrames - written)
+            var samples = [Int16](repeating: 0, count: count)
+            for i in 0..<count {
+                samples[i] = Int16(sin(2 * .pi * 440 * Double(written + i) / sampleRate) * 12_000)
+            }
+            var block: CMBlockBuffer?
+            let bytes = count * 2
+            CMBlockBufferCreateWithMemoryBlock(
+                allocator: nil, memoryBlock: nil, blockLength: bytes, blockAllocator: nil,
+                customBlockSource: nil, offsetToData: 0, dataLength: bytes, flags: 0, blockBufferOut: &block
+            )
+            guard let block else { throw TestVideoError.writerFailed }
+            samples.withUnsafeBytes { raw in
+                _ = CMBlockBufferReplaceDataBytes(with: raw.baseAddress!, blockBuffer: block, offsetIntoDestination: 0, dataLength: bytes)
+            }
+            var sampleBuffer: CMSampleBuffer?
+            CMAudioSampleBufferCreateReadyWithPacketDescriptions(
+                allocator: nil, dataBuffer: block, formatDescription: formatDescription!,
+                sampleCount: count, presentationTimeStamp: CMTime(value: CMTimeValue(written), timescale: CMTimeScale(sampleRate)),
+                packetDescriptions: nil, sampleBufferOut: &sampleBuffer
+            )
+            guard let sampleBuffer else { throw TestVideoError.writerFailed }
+            audio.append(sampleBuffer)
+            written += count
+        }
+        audio.markAsFinished()
+
+        await writer.finishWriting()
+        guard writer.status == .completed else { throw writer.error ?? TestVideoError.writerFailed }
+        return url
+    }
+
+    /// 動画の各トラックの長さ（秒）
+    static func trackSeconds(of url: URL) async throws -> (video: Double, audio: Double?) {
+        let asset = AVURLAsset(url: url)
+        let video = try await asset.loadTracks(withMediaType: .video).first
+        let audio = try await asset.loadTracks(withMediaType: .audio).first
+        let videoRange = try await video?.load(.timeRange)
+        let audioRange = try await audio?.load(.timeRange)
+        return (videoRange?.end.seconds ?? 0, audioRange?.end.seconds)
+    }
+
     /// HLG（HDR）の印を付けた動画を作るときの色の設定。中身の画素は同じまま、印だけが変わる
     static let hlgColorProperties: [String: String] = [
         AVVideoColorPrimariesKey:     AVVideoColorPrimaries_ITU_R_2020,

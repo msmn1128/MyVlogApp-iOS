@@ -202,6 +202,38 @@ struct ExportOutputTests {
                 == kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2 as String)
     }
 
+    /// 音声の長さが映像と違う動画を書き出して2本つないだときの、各トラックの長さ
+    private func mergedTracks(videoSeconds: Double, audioSeconds: Double) async throws -> (clip: (video: Double, audio: Double?), merged: (video: Double, audio: Double?)) {
+        let source = try await TestVideoFactory.makeVideoWithAudio(videoSeconds: videoSeconds, audioSeconds: audioSeconds)
+        // 取り込み時の尺は動画全体の長さ（映像と音声の長い方）になる
+        let durationMs = Int64(try await AVURLAsset(url: source).load(.duration).seconds * 1000)
+        var clip = makeClip(source: source, endMs: durationMs)
+        clip.durationMs = durationMs
+        let first  = try await ExportRunner().processClip(clip, silent: false)
+        let second = try await ExportRunner().processClip(clip, silent: false)
+        let merged = try await ExportRunner().concatenate(urls: [first, second])
+        defer { TestVideoFactory.remove(source, first, second, merged) }
+        return (try await TestVideoFactory.trackSeconds(of: first), try await TestVideoFactory.trackSeconds(of: merged))
+    }
+
+    @Test("音声が映像より長い動画をつないでも、映像に隙間ができない")
+    func longerAudioIsCutToTheVideo() async throws {
+        // 回帰テスト: 映像1.0秒・音声1.3秒の動画を2本つなぐと、2本目の映像が1.3秒から始まり、
+        // 映像に0.3秒の隙間ができていた（Android: 音声を apad → atrim で映像と同じ尺に強制する）
+        let tracks = try await mergedTracks(videoSeconds: 1, audioSeconds: 1.3)
+        #expect(abs((tracks.clip.audio ?? 0) - tracks.clip.video) < 0.05, "クリップの音声が映像より長い: \(tracks.clip)")
+        #expect(abs(tracks.merged.video - 2.0) < 0.05, "つないだ映像の長さ: \(tracks.merged)")
+        #expect(abs((tracks.merged.audio ?? 0) - 2.0) < 0.05, "つないだ音声の長さ: \(tracks.merged)")
+    }
+
+    @Test("音声が映像より短い動画をつないでも、2本目の音声は2本目の映像の頭から始まる")
+    func shorterAudioStaysInPlace() async throws {
+        let tracks = try await mergedTracks(videoSeconds: 1, audioSeconds: 0.6)
+        #expect(abs(tracks.merged.video - 2.0) < 0.05, "つないだ映像の長さ: \(tracks.merged)")
+        // 2本目の音声は1.0〜1.6秒。末尾がずれていなければ、頭もずれていない
+        #expect(abs((tracks.merged.audio ?? 0) - 1.6) < 0.05, "つないだ音声の長さ: \(tracks.merged)")
+    }
+
     // MARK: - タイトルカード
 
     @Test("タイトルカードは2秒・キャンバス一杯で、文言が中央に出る")

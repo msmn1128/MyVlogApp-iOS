@@ -317,7 +317,18 @@ actor ExportWorker {
                 guard let compAudio = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
                     throw ExportError.sessionCreationFailed
                 }
-                try? compAudio.insertTimeRange(trimRange, of: srcAudio, at: .zero)
+                // 音声は映像と同じ長さまでにする（Android: apad → atrim で映像と同じ尺に強制するのと同じ）。
+                // 素材の音声は映像より長いことがあり、そのまま入れるとクリップのファイルの長さが音声の長さに
+                // なって、結合したとき次のクリップの映像がそのぶん後ろへずれ、映像に隙間ができていた
+                // （映像1.0秒・音声1.3秒で、2本目の映像が1.3秒から始まった）。短いぶんは無音のままでよい
+                let audioRange = try await srcAudio.load(.timeRange)
+                let usable = CMTimeRangeGetIntersection(
+                    CMTimeRange(start: trimRange.start, duration: CMTimeMinimum(trimRange.duration, videoDuration)),
+                    otherRange: audioRange
+                )
+                if usable.duration > .zero {
+                    try compAudio.insertTimeRange(usable, of: srcAudio, at: usable.start - trimRange.start)
+                }
             }
         }
 
@@ -355,15 +366,23 @@ actor ExportWorker {
 
         var insertTime = CMTime.zero
         for url in urls {
-            let asset    = AVURLAsset(url: url)
-            let vTracks  = try await asset.load(.tracks).filter { $0.mediaType == .video }
-            let aTracks  = try await asset.load(.tracks).filter { $0.mediaType == .audio }
-            let duration = try await asset.load(.duration)
-            let range    = CMTimeRange(start: .zero, duration: duration)
+            let asset   = AVURLAsset(url: url)
+            let vTracks = try await asset.loadTracks(withMediaType: .video)
+            let aTracks = try await asset.loadTracks(withMediaType: .audio)
+            guard let vt = vTracks.first else { throw ExportError.noVideoTrack }
+            // 次のクリップは映像の長さぶん後ろに置く。ファイルの長さ（映像と音声の長い方）で進めると、
+            // 音声が長いクリップのあとで映像に隙間ができる。音声も映像の長さまでで切る（Android: atrim）
+            let videoRange = try await vt.load(.timeRange)
+            let range = CMTimeRange(start: .zero, duration: videoRange.end)
 
-            if let vt = vTracks.first { try videoTrack.insertTimeRange(range, of: vt, at: insertTime) }
-            if let at = aTracks.first { try? audioTrack.insertTimeRange(range, of: at, at: insertTime) }
-            insertTime = insertTime + duration
+            try videoTrack.insertTimeRange(range, of: vt, at: insertTime)
+            if let at = aTracks.first {
+                let usable = CMTimeRangeGetIntersection(range, otherRange: try await at.load(.timeRange))
+                if usable.duration > .zero {
+                    try audioTrack.insertTimeRange(usable, of: at, at: insertTime + usable.start)
+                }
+            }
+            insertTime = insertTime + range.duration
         }
 
         // 出力はMP4なので拡張子も.mp4にする。中身と拡張子が食い違っていると、
