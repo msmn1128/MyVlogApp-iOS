@@ -47,11 +47,17 @@ struct PreviewView: View {
                 PreviewCaptionLayer(clip: store.selectedClip, canvas: canvasSize, scale: scale)
 
                 if playerManager.isLoading {
-                    Color.black.opacity(0.45)
-                    ProgressView()
-                        .progressViewStyle(.circular)
-                        .tint(.white)
-                        .scaleEffect(1.5)
+                    // 見せるだけで、タップは下のプレビューへ素通りさせる。覆いがタップを受け止めていたため、
+                    // 読み込み中にプレビューを押しても再生の操作が届かず、何も起きなかった
+                    // （届けば、読み込み終わったところで再生が始まる。AVPlayerが再生するつもりを保つため）
+                    ZStack {
+                        Color.black.opacity(0.45)
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .tint(.white)
+                            .scaleEffect(1.5)
+                    }
+                    .allowsHitTesting(false)
                 }
             }
             .animation(.default, value: playerManager.isLoading)

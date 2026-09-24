@@ -61,6 +61,12 @@ enum UITestSupport {
     /// DEBUGビルドにしか無いので、リリースビルドの挙動には一切影響しない。
     static var isRunningUITests: Bool { isUITestRun }
 
+    /// プレビューの動画の読み込みを遅らせる秒数（例: -UITestPreviewLoadDelay 2）。指定が無ければnil。
+    /// 「読み込み中に再生を押す」をUIテストで確実に起こすために使う
+    static var previewLoadDelaySeconds: Double? {
+        value(after: "-UITestPreviewLoadDelay").flatMap(Double.init).flatMap { $0 > 0 ? $0 : nil }
+    }
+
     /// 入れるクリップの本数。指定が無ければnil
     static var seedClipCount: Int? {
         value(after: seedArgument).flatMap(Int.init).flatMap { $0 > 0 ? $0 : nil }

@@ -143,6 +143,12 @@ final class VideoPlayerManager {
         removeEndObserver()
 
         do {
+            #if DEBUG
+            // UIテストで「読み込み中に再生を押す」を確実に起こすため、読み込みを遅らせる（UITestSupport）
+            if let delay = UITestSupport.previewLoadDelaySeconds {
+                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            }
+            #endif
             let asset = try await AssetLoader.shared.load(clip: clip, forPreview: true)
             guard !Task.isCancelled else { return }
             let item = AVPlayerItem(asset: asset)
@@ -156,8 +162,12 @@ final class VideoPlayerManager {
                 play()
             }
         } catch {
-            // フォトライブラリに見つからない・アクセスできない動画はここへ来る
-            if !Task.isCancelled { reportPlaybackError(clip: clip) }
+            // フォトライブラリに見つからない・アクセスできない動画はここへ来る。
+            // 読み込み中に再生を押されていても果たせないので止める（「再生中」のまま残すと次のタップが空振りする）
+            if !Task.isCancelled {
+                pause()
+                reportPlaybackError(clip: clip)
+            }
         }
     }
 

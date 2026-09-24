@@ -166,4 +166,21 @@ final class PlaybackUITests: XCTestCase {
         )
         attachScreenshot(app, name: "restored_and_playing")
     }
+
+    /// プレビューの動画を読み込んでいる間に再生を押しても、読み込み終わったところで再生が始まる。
+    ///
+    /// 回帰テスト: 読み込み中はプレビューの上に半透明の覆いを出していて、それがタップを受け止めていた。
+    /// 動画を入れた直後（まだ読み込み中）にプレビューを押しても何も起きず、シミュレータが重いときに
+    /// 再生のUIテストがまれに落ちていた
+    @MainActor
+    func testPlayPressedWhileLoadingStartsAfterLoad() throws {
+        // 読み込みを2秒遅らせて、その間に押す
+        let app = launchApp(clipCount: 1, clipSeconds: 3, extraArguments: ["-UITestPreviewLoadDelay", "2"])
+        preview(in: app).tap()
+
+        XCTAssertTrue(
+            waitUntil(timeout: 10) { (playheadMs(in: app) ?? 0) > 300 },
+            "読み込み中に押した再生が、読み込み後に始まらない（再生位置 \(playheadMs(in: app) ?? -1)ms）"
+        )
+    }
 }

@@ -23,10 +23,11 @@ extension XCTestCase {
     ///   既定（nil）は端末のまま。最大サイズでレイアウトが破綻しないかを見るテストで使う。
     @MainActor
     func launchApp(
-        clipCount: Int, clipSeconds: Double? = nil, contentSizeCategory: String? = nil
+        clipCount: Int, clipSeconds: Double? = nil, contentSizeCategory: String? = nil,
+        extraArguments: [String] = []
     ) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments += ["-UITestSeedClips", "\(clipCount)"]
+        app.launchArguments += ["-UITestSeedClips", "\(clipCount)"] + extraArguments
         if let clipSeconds {
             app.launchArguments += ["-UITestSeedClipSeconds", "\(clipSeconds)"]
         }
