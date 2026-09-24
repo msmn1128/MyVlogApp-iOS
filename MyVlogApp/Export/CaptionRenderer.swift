@@ -15,7 +15,7 @@ import UIKit
 /// 可変状態を持たないので、どのactorからでも呼べるようnonisolatedにしてある（書き出しはExportWorker上）。
 nonisolated enum CaptionRenderer {
 
-    /// ひとこと（上下左右中央、複数行）。空の行・空白だけの行は描かずに位置だけ残す
+    /// ひとこと（上下左右中央、複数行。長い行は折り返す）。空の行・空白だけの行は描かずに位置だけ残す
     /// （Android: hitokotoLines が isBlank の行を描かないのと同じ）
     ///
     /// - Parameter scale: キャンバス（1920x1080）に対する倍率。書き出しは1、プレビューは表示の大きさ÷1080
@@ -23,7 +23,7 @@ nonisolated enum CaptionRenderer {
         let fontSize = VlogLayout.hitokotoFontSize * scale
         let lineGap  = VlogLayout.hitokotoLineGap * scale
         let lineHeight = fontSize + lineGap
-        let lines = VlogLayout.captionLines(text)
+        let lines = wrappedHitokotoLines(text)
         let top = VlogLayout.hitokotoBlockTop(
             lineCount: lines.count, canvasHeight: canvas.height, fontSize: fontSize, lineGap: lineGap
         )
@@ -34,6 +34,42 @@ nonisolated enum CaptionRenderer {
                 centerY: top + CGFloat(index) * lineHeight + lineHeight / 2, in: context
             )
         }
+    }
+
+    /// ひとことの行。改行で分けたうえで、撮影時刻に届かない幅（`VlogLayout.hitokotoWrapWidth`）に
+    /// 収まるよう折り返す。空の行・空白だけの行はそのまま1行として残す。
+    ///
+    /// 測るのは常にキャンバス上の大きさ（倍率1）。表示の倍率で測ると、プレビューの大きさによって
+    /// 改行の位置が1文字ずれうる（CoreTextの字の幅は倍率にぴったり比例するとは限らない）。
+    /// 倍率1で分けた行を、それぞれの倍率で描くので、プレビューと書き出しの改行位置は必ず一致する
+    /// （Android: wrapLines をプレビューと書き出しで共用しているのと同じ）
+    static func wrappedHitokotoLines(_ text: String) -> [String] {
+        let font = hitokotoFont(size: VlogLayout.hitokotoFontSize)
+        return VlogLayout.captionLines(text).flatMap {
+            wrap($0, font: font, width: VlogLayout.hitokotoWrapWidth)
+        }
+    }
+
+    /// 1行を[width]に収まるよう分ける。分け方はCoreText（CTTypesetter）に任せる
+    /// （和文の禁則・英単語の区切り・絵文字の組み合わせを守る）。折り返した位置の空白は行末に
+    /// 残るので落とす（中央揃えで、その分だけ左へずれて見えるため）
+    static func wrap(_ line: String, font: UIFont, width: CGFloat) -> [String] {
+        guard !isBlank(line) else { return [line] }
+        let typesetter = CTTypesetterCreateWithAttributedString(
+            NSAttributedString(string: line, attributes: [.font: font])
+        )
+        let utf16 = line as NSString
+        var pieces: [String] = []
+        var start = 0
+        while start < utf16.length {
+            let count = CTTypesetterSuggestLineBreak(typesetter, start, Double(width))
+            guard count > 0 else { break }
+            var piece = utf16.substring(with: NSRange(location: start, length: count))
+            while let last = piece.last, last.isWhitespace { piece.removeLast() }
+            if !piece.isEmpty { pieces.append(piece) }
+            start += count
+        }
+        return pieces.isEmpty ? [line] : pieces
     }
 
     /// タイトルカードの文言（撮影日または自由入力）。2行目以降になっても1行目の位置は動かさず、
@@ -82,7 +118,7 @@ nonisolated enum CaptionRenderer {
         UIFont(name: VlogFonts.logoTypeName, size: size) ?? UIFont.boldSystemFont(ofSize: size)
     }
 
-    /// 1行を、横は中央・縦はベースラインで置いて白で描く。長い行は左右へ均等にはみ出す
+    /// 1行を、横は中央・縦はベースラインで置いて白で描く。長い行（折り返さないタイトルの文言）は左右へ均等にはみ出す
     static func drawLine(_ text: String, font: UIFont, centerX: CGFloat, centerY: CGFloat, in context: CGContext) {
         guard !isBlank(text) else { return }
         // 色は描く先の塗りの色を使う（CoreTextはUIKitの色の指定を読まないため）。絵文字は自分の色で描かれる

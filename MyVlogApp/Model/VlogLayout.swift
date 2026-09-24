@@ -13,6 +13,11 @@ nonisolated enum VlogLayout {
     static let hitokotoLineGap:   CGFloat = 10
     static let timestampFontSize: CGFloat = 60
     static let timestampRightPad: CGFloat = 40
+    /// ひとことを自動で折り返す幅（キャンバス上）。中央に置くので、左右に(1920-この幅)/2ずつ空く。
+    /// 右端の撮影時刻（右余白40＋「22:31」の幅で約200）に重ならないよう、左右とも260空けている。
+    /// 折り返さなかった頃は、長いひとことが撮影時刻に重なり、さらに長いと画面の外で切れていた。
+    /// 撮影時刻の文字の大きさや余白を変えたら、ここも見直すこと（Android: HITOKOTO_WRAP_WIDTH_PT）
+    static let hitokotoWrapWidth: CGFloat = 1400
     static let titleVlogFontSize: CGFloat = 150
     static let titleDateFontSize: CGFloat = 50
     static let titleVlogYOffset:  CGFloat = -70

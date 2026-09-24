@@ -135,6 +135,28 @@ struct ExportOutputTests {
         #expect(yellow > 200, "絵文字がカラーで出ていない（黄色い画素 \(yellow)）")
     }
 
+    @Test("長いひとことは2行に折り返して焼き込まれ、撮影時刻に重ならない")
+    func longHitokotoIsWrappedInTheExport() async throws {
+        // 折り返さなかった頃は、長いひとことが右端の撮影時刻に重なり、さらに長いと画面の外で切れていた。
+        // プレビューと同じ描画関数（CaptionRenderer）で折り返すので、書き出しでも同じ位置で2行になる
+        let text = "今日は朝から海へ行って、みんなでバーベキューをしてから花火を見ました"
+        let source = try await TestVideoFactory.makeSolidColorVideo(seconds: 1)
+        let output = try await ExportRunner().processClip(makeClip(source: source, text: text), silent: true)
+        defer { TestVideoFactory.remove(source, output) }
+
+        let frame = try await FrameInspector.frame(of: output, atSeconds: 0.5)
+        // 2行目（中央より下）にも字がある。1行のままなら中央の1行分（y=505…575あたり）にしか出ない
+        let secondLine = CGRect(x: 400, y: 590, width: 1120, height: 30)
+        #expect(FrameInspector.brightPixelCount(frame, in: secondLine) > 0, "2行目が無い（折り返していない）")
+        // 折り返し幅の外（左右とも、キャンバスの端から260の内側まで）には、ひとことが出ない。
+        // 右側は撮影時刻（「12:34」の左端がx=1700あたり）の手前までを見る
+        let side = (VlogLayout.canvasWidth - VlogLayout.hitokotoWrapWidth) / 2
+        let leftGap  = CGRect(x: 0, y: 400, width: side - 4, height: 280)
+        let rightGap = CGRect(x: VlogLayout.canvasWidth - side + 4, y: 400, width: 30, height: 280)
+        #expect(FrameInspector.brightPixelCount(frame, in: leftGap) == 0, "左の余白に字がはみ出している")
+        #expect(FrameInspector.brightPixelCount(frame, in: rightGap) == 0, "撮影時刻の手前の余白に字がはみ出している")
+    }
+
     @Test("トリムした区間の長さだけが書き出される")
     func onlyTrimmedRangeIsExported() async throws {
         let source = try await TestVideoFactory.makeSolidColorVideo(seconds: 1)
