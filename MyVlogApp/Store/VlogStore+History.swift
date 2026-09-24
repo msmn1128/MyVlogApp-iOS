@@ -97,5 +97,9 @@ extension VlogStore {
         selectedIndex = snap.selectedIndex
         resetCoalescing()
         scheduleAutoSave()
+        // 一時保存の読み出しを取り消したときなど、タイムラインから外れた動画の波形・サムネイル・
+        // AVAssetを捨てる（Android: replacementCount を見て pruneUnusedWaveforms）。
+        // 1件ずつの削除は deleteClip が捨てるが、履歴での入れ替えはそこを通らず持ち続けていた
+        releaseUnusedMediaCaches()
     }
 }
