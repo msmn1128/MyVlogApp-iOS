@@ -175,8 +175,12 @@ struct ContentView: View {
         // makeClipFromPH（PHAssetのメタデータだけを読む軽量パス）が一切使われず、
         // 選んだ動画every回VideoTransfer経由でフルクオリティのデータを丸ごとコピーする
         // 低速フォールバックに落ちてしまっていた（読み込みが極端に長くなる不具合の原因）
+        //
+        // preferredItemEncoding は .current（元の形式のまま受け取る）。.automatic だと、写真へのアクセスが
+        // 無くて動画そのものを受け取る経路（VideoTransfer）で、HEVCなどを互換の形式へ変換してから
+        // 渡されるため、取り込みが遅くなり、画質も落ちていた（書き出しでもう一度圧縮するので二重になる）
         .photosPicker(isPresented: $showPhotoPicker, selection: $photoItems,
-                      matching: .videos, preferredItemEncoding: .automatic,
+                      matching: .videos, preferredItemEncoding: .current,
                       photoLibrary: .shared())
         .onChange(of: photoItems) { _, items in
             Task { await handlePhotosPick(items) }
