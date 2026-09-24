@@ -189,7 +189,7 @@ struct WaveformView: View {
                 Color.clear
                     .accessibilityElement()
                     .accessibilityLabel("トリム開始")
-                    .accessibilityValue(Formatters.durationLabel(ms: clip.startMs))
+                    .accessibilityValue(Formatters.spokenTimeLabel(ms: clip.startMs))
                     .accessibilityHint("上下スワイプで、切り出しの開始位置を動かします")
                     .accessibilityAdjustableAction { direction in
                         adjustTrimStart(by: step(for: clip, direction: direction))
@@ -198,7 +198,7 @@ struct WaveformView: View {
                 Color.clear
                     .accessibilityElement()
                     .accessibilityLabel("トリム終了")
-                    .accessibilityValue(Formatters.durationLabel(ms: clip.endMs))
+                    .accessibilityValue(Formatters.spokenTimeLabel(ms: clip.endMs))
                     .accessibilityHint("上下スワイプで、切り出しの終了位置を動かします")
                     .accessibilityAdjustableAction { direction in
                         adjustTrimEnd(by: step(for: clip, direction: direction))
@@ -210,7 +210,7 @@ struct WaveformView: View {
                     .accessibilityElement()
                     .accessibilityLabel("範囲ごと移動")
                     .accessibilityValue(
-                        "\(Formatters.durationLabel(ms: clip.startMs))〜\(Formatters.durationLabel(ms: clip.endMs))"
+                        "\(Formatters.spokenTimeLabel(ms: clip.startMs))〜\(Formatters.spokenTimeLabel(ms: clip.endMs))"
                     )
                     .accessibilityHint("上下スワイプで、長さはそのままに使う範囲を前後へ動かします")
                     .accessibilityAdjustableAction { direction in
@@ -221,7 +221,7 @@ struct WaveformView: View {
                     Color.clear
                         .accessibilityElement()
                         .accessibilityLabel("ひとことの区切り\(index)")
-                        .accessibilityValue(Formatters.durationLabel(ms: clip.texts[index].startMs))
+                        .accessibilityValue(Formatters.spokenTimeLabel(ms: clip.texts[index].startMs))
                         .accessibilityHint("上下スワイプで、区切りの位置を前後に動かします")
                         .accessibilityAdjustableAction { direction in
                             moveSplit(index: index, by: step(for: clip, direction: direction))
@@ -231,7 +231,7 @@ struct WaveformView: View {
                 Color.clear
                     .accessibilityElement()
                     .accessibilityLabel("再生位置")
-                    .accessibilityValue(Formatters.durationLabel(ms: playerManager.currentTimeMs))
+                    .accessibilityValue(Formatters.spokenTimeLabel(ms: playerManager.currentTimeMs))
                     .accessibilityHint("上下スワイプで、再生位置を前後に動かします")
                     .accessibilityAdjustableAction { direction in
                         adjustPlayhead(by: step(for: clip, direction: direction), clip: clip)

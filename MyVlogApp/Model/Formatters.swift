@@ -39,6 +39,15 @@ nonisolated enum Formatters {
         return String(format: "%d:%02d", locale: fixedLocale, s / 60, s % 60)
     }
 
+    /// 読み上げ用の時刻「1:05.5」（小数1桁。Android: WaveformTrimmerAccessibility.spokenTime）。
+    ///
+    /// 波形の調整（上下スワイプ）は1回に0.1〜1秒しか動かないので、「m:ss」のままだと動かしても
+    /// 読み上げの値が変わらないことがあり、動いたのかどうか分からなかった
+    static func spokenTimeLabel(ms: Int64) -> String {
+        let tenths = (max(0, ms) + 50) / 100
+        return String(format: "%d:%02d.%d", locale: fixedLocale, tenths / 600, tenths / 10 % 60, tenths % 10)
+    }
+
     /// トリミング後の長さの、表示用の値。両端をそれぞれ秒へ丸めてから差を取る（Android: roundedTrimMs）。
     ///
     /// 長さそのもの（end−start）を丸めると、両端の表示の引き算と1秒ずれることがある

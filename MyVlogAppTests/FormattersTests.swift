@@ -132,6 +132,14 @@ struct FormattersTests {
         #expect(Formatters.durationLabel(ms: 59_600) == "1:00")
     }
 
+    @Test("読み上げの時刻は小数1桁まで出す（0.1秒ずつ動かしても値が変わる）")
+    func spokenTimeHasTenths() {
+        #expect(Formatters.spokenTimeLabel(ms: 3_200) == "0:03.2")
+        #expect(Formatters.spokenTimeLabel(ms: 3_300) == "0:03.3")
+        #expect(Formatters.spokenTimeLabel(ms: 65_540) == "1:05.5")
+        #expect(Formatters.spokenTimeLabel(ms: -10) == "0:00.0")
+    }
+
     @Test("負の尺でも 0:00 として出す（マイナス表記にしない）")
     func durationLabelNegative() {
         #expect(Formatters.durationLabel(ms: -1_000) == "0:00")
