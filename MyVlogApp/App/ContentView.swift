@@ -173,7 +173,7 @@ struct ContentView: View {
         // Photo picker
         // photoLibrary: .shared() を渡さないとPhotosPickerItem.itemIdentifierが常にnilになり、
         // makeClipFromPH（PHAssetのメタデータだけを読む軽量パス）が一切使われず、
-        // 選んだ動画every回VideoTransfer経由でフルクオリティのデータを丸ごとコピーする
+        // 選んだ動画を毎回VideoTransfer経由でフルクオリティのデータを丸ごとコピーする
         // 低速フォールバックに落ちてしまっていた（読み込みが極端に長くなる不具合の原因）
         //
         // preferredItemEncoding は .current（元の形式のまま受け取る）。.automatic だと、写真へのアクセスが

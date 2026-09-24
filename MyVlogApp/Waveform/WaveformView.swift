@@ -228,14 +228,11 @@ struct WaveformView: View {
                         }
                 }
 
-                Color.clear
-                    .accessibilityElement()
-                    .accessibilityLabel("再生位置")
-                    .accessibilityValue(Formatters.spokenTimeLabel(ms: playerManager.currentTimeMs))
-                    .accessibilityHint("上下スワイプで、再生位置を前後に動かします")
-                    .accessibilityAdjustableAction { direction in
-                        adjustPlayhead(by: step(for: clip, direction: direction), clip: clip)
-                    }
+                // 再生位置を読むのは、この項目だけの葉（PlayheadAccessibilityElement）にする。
+                // accessibilityChildrenの中身は波形のbodyを作るときにその場で組み立てられるので、
+                // ここで直接読むと波形全体が再生位置に依存し、再生中は毎秒30回、波形の棒（最大6000本）
+                // まで描き直していた（再生ヘッドだけを別の層に分けた意味が無くなっていた）
+                PlayheadAccessibilityElement(clip: clip, step: step(for: clip, direction: .increment))
             }
         }
     }
@@ -282,8 +279,24 @@ struct WaveformView: View {
         playerManager.seek(to: moved)
     }
 
-    private func adjustPlayhead(by deltaMs: Int64, clip: VlogClip) {
-        playerManager.seek(to: clip.clampToTrim(playerManager.currentTimeMs + deltaMs))
+    /// 読み上げ用の「再生位置」の項目。再生位置を読むのはここだけ（理由は呼び出し側のコメント）
+    private struct PlayheadAccessibilityElement: View {
+        @Environment(VideoPlayerManager.self) private var playerManager
+        let clip: VlogClip
+        /// 上下スワイプ1回で動かす量（増やす向き）
+        let step: Int64
+
+        var body: some View {
+            Color.clear
+                .accessibilityElement()
+                .accessibilityLabel("再生位置")
+                .accessibilityValue(Formatters.spokenTimeLabel(ms: playerManager.currentTimeMs))
+                .accessibilityHint("上下スワイプで、再生位置を前後に動かします")
+                .accessibilityAdjustableAction { direction in
+                    let delta = direction == .increment ? step : -step
+                    playerManager.seek(to: clip.clampToTrim(playerManager.currentTimeMs + delta))
+                }
+        }
     }
 
     // MARK: - Coordinate helpers
@@ -483,8 +496,13 @@ struct WaveformView: View {
         isLoading = true
         waveform  = nil
         // どの経路で抜けてもスピナーを下ろす。以前は早期returnの経路で立てっぱなしになり、
-        // 全クリップを削除してから足し直すと「読み込み中」が消えないことがあった
-        defer { isLoading = false }
+        // 全クリップを削除してから足し直すと「読み込み中」が消えないことがあった。
+        //
+        // ただし、別のクリップへ切り替わって取り消された回は下ろさない。取り消された前の読み込みが
+        // 遅れて終わると、切り替え先の読み込み中に「読み込み中」を下ろしてしまい、まだ読んでいるのに
+        // 「波形を取得できませんでした」が出ていた（再生側の loadGeneration と同じ種類の問題）。
+        // 下ろすのは切り替え先の読み込み（.taskが新しく走らせる）の役目
+        defer { if !Task.isCancelled { isLoading = false } }
 
         do {
             let asset = try await AssetLoader.shared.load(clip: clip, forPreview: true)

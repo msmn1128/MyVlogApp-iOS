@@ -159,6 +159,57 @@ final class MyVlogAppUITests: XCTestCase {
         XCTAssertEqual(textView.value as? String, afterUndo + "d", "もとに戻した内容が次の1文字で打ち消された")
     }
 
+    /// キーボードを出したまま別のクリップを選ぶと、入力欄はそのクリップの頭の区間へ合わせ直され、
+    /// 打った文字はそこへ入る。
+    ///
+    /// 回帰テスト: 打っている間はクリップが変わっても合わせ直していなかったので、編集中の区間の文字が
+    /// 2本で同じ（どちらも未入力）だと前のクリップの区間の番号のまま残り、2本目の2区間目に入っていた
+    @MainActor
+    func testSwitchingClipsWhileTypingEditsTheNewClipsFirstSegment() throws {
+        let app = launchApp(clipCount: 2, clipSeconds: 4)
+        let waveform = app.otherElements["波形。トリム範囲とひとことの区切りを調整できます"]
+        XCTAssertTrue(waveform.waitForExistence(timeout: 10), "波形が見つからない")
+        let splitButton = app.buttons["ここでひとことを分割（動画は切りません）"]
+        // 波形の横の位置（つまみから離れたところ）をタップして、その位置へ頭出しする
+        func seek(to fraction: CGFloat) {
+            waveform.coordinate(withNormalizedOffset: CGVector(dx: fraction, dy: 0.5)).tap()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+        }
+
+        // 2本とも真ん中で2区間に分ける（どちらの区間も未入力のまま）
+        for index in [2, 1] {
+            app.buttons["\(index)本目のクリップ"].tap()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.8))
+            seek(to: 0.5)
+            splitButton.tap()
+            XCTAssertTrue(
+                app.staticTexts["／2 区間目を編集中"].waitForExistence(timeout: 3), "\(index)本目を分割できなかった"
+            )
+        }
+
+        // 1本目の2区間目を打ち始めた状態で、2本目を選んで打つ
+        seek(to: 0.85)
+        let textView = app.textViews.firstMatch
+        textView.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        app.buttons["2本目のクリップ"].tap()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.8))
+        app.typeText("X")
+        app.buttons["keyboardDone"].tap()
+
+        // 2本目の頭の区間に入っていること（終わりの区間は空のまま）
+        seek(to: 0.85)
+        XCTAssertTrue(
+            waitUntil(timeout: 3) { (textView.value as? String ?? "") != "X" },
+            "2本目の終わりの区間に入った（前のクリップで編集していた区間の番号のまま）"
+        )
+        seek(to: 0.15)
+        XCTAssertTrue(
+            waitUntil(timeout: 3) { (textView.value as? String) == "X" },
+            "2本目の頭の区間に入っていない（\(textView.value ?? "")）"
+        )
+    }
+
     /// クリップが無いとき、ひとこと欄を触ってもキーボードは開かない（打った文字の行き先が無い）
     @MainActor
     func testHitokotoIsNotEditableWithoutClips() throws {

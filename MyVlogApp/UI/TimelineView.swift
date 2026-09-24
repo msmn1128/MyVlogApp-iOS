@@ -76,7 +76,11 @@ struct TimelineView: View {
                             isSelected: idx == store.selectedIndex,
                             isMissing: store.missingClipIds.contains(clip.id)
                         )
-                            .id(idx)
+                            // 目印はクリップのidにする（ForEachと同じ）。以前は並びの番号（idx）を付けていたため、
+                            // 手前のクリップを削除・並べ替えると後ろのタイルの目印が変わり、SwiftUIが別のタイルとして
+                            // 作り直していた。サムネイルがいったん消えて出し直され、新しい位置へ滑らかに動くはずの
+                            // アニメーション（操作バーのwithAnimation）も、消えて現れるだけになっていた
+                            .id(clip.id)
                             .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.clipRowSpace)) } action: {
                                 tileFrames.frames[idx] = $0
                             }
@@ -118,15 +122,19 @@ struct TimelineView: View {
             // 入れ替わっていた（長押しのミュートが別のクリップに効く）。はみ出しているときは、
             // はみ出した側の端へ寄せるだけにする（Android f12806b）
             .onChange(of: store.selectedIndex) { _, idx in
-                guard let idx else { return }
+                guard let idx, store.clips.indices.contains(idx) else { return }
+                let id = store.clips[idx].id
+                // 位置は並びの番号で覚えてある（タイルの幅はそろっているので、番号ごとの場所は並べ替えても変わらない）。
+                // 並べ替えた直後は、動かしたタイルの位置の知らせがまだ届いていないため、クリップごとに覚えると
+                // 動かす前の場所で判断してしまう
                 guard let frame = tileFrames.frames[idx], clipRowWidth > 0 else {
-                    withAnimation { proxy.scrollTo(idx, anchor: .center) }
+                    withAnimation { proxy.scrollTo(id, anchor: .center) }
                     return
                 }
                 if frame.minX < 0 {
-                    withAnimation { proxy.scrollTo(idx, anchor: .leading) }
+                    withAnimation { proxy.scrollTo(id, anchor: .leading) }
                 } else if frame.maxX > clipRowWidth {
-                    withAnimation { proxy.scrollTo(idx, anchor: .trailing) }
+                    withAnimation { proxy.scrollTo(id, anchor: .trailing) }
                 }
             }
         }

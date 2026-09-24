@@ -13,6 +13,10 @@ struct TextInputView: View {
     @State private var text:         String = ""
     @State private var segmentIndex: Int    = 0
     @State private var isEditing:    Bool   = false
+    /// 入力欄を最後に合わせたクリップ。クリップが切り替わると、ひとことの中身の監視（texts）も同時に
+    /// 呼ばれる。そちらは再生位置（まだ前のクリップのまま）で合わせてしまうので、切り替えの処理
+    /// （selectedClip?.id の監視）に任せて何もしない
+    @State private var syncedClipId: UUID?   = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -82,8 +86,16 @@ struct TextInputView: View {
         // 作り直される（UITextViewのupdateUIViewも毎回走る）
         .overlay { PlaybackPositionObserver { _ in if !isEditing { syncSegment() } } }
         // 選択中のクリップが「別のもの」に変わったときに読み直す。indexではなくidで見るのは
-        // ContentViewと同じ理由（indexは値が変わらないまま中身だけ入れ替わることがある）
-        .onChange(of: store.selectedClip?.id) { syncText() }
+        // ContentViewと同じ理由（indexは値が変わらないまま中身だけ入れ替わることがある）。
+        //
+        // 打っている最中（キーボードを出したまま別のタイルを押した）でも読み直す。以前は打っている間は
+        // 読み直さず、下のtextsの監視が「文字が食い違ったら合わせ直す」だけだったため、編集中の区間の
+        // 文字が2本で同じ（どちらも未入力など）だと、前のクリップの区間の番号のまま残り、打った文字が
+        // 新しいクリップの再生位置と違う区間（前のクリップで2区間目なら、新しいクリップでも2区間目）に入っていた
+        //
+        // 区間は新しいクリップの頭（トリム開始）で決める。再生位置は、読み込みが終わって頭を出すまで
+        // 前のクリップのままなので、それで決めると別の区間を選んでしまう
+        .onChange(of: store.selectedClip?.id) { syncText(force: true, atMs: store.selectedClip?.startMs) }
         // 外からひとことが書き換わったとき（もとに戻す/やり直す・分割・区切りの解除）に追従する。
         //
         // 以前はclips配列全体をonChangeの対象にしていた。ひとことを1文字打つたびに
@@ -92,6 +104,7 @@ struct TextInputView: View {
         // 必要なのは選択中クリップのtextsだけなので、そこへ絞る
         // （ContentView.swiftが同じ理由でisEmpty/isMutedへ絞っているのと同じ方針）。
         .onChange(of: store.selectedClip?.texts) {
+            guard store.selectedClip?.id == syncedClipId else { return }
             if !isEditing { syncText(); return }
             // 打っている最中でも、外から変わったとき（キーボードを出したままの「もとに戻す」「やり直す」）は
             // 入力欄を合わせ直す。打った文字はその場で保存側へ流しているので、保存側と入力欄が
@@ -116,11 +129,14 @@ struct TextInputView: View {
         }
     }
 
-    /// - Parameter force: 打っている最中でも合わせ直す（外から変わったとき）
-    private func syncText(force: Bool = false) {
+    /// - Parameters:
+    ///   - force: 打っている最中でも合わせ直す（外から変わったとき）
+    ///   - atMs: どの位置の区間に合わせるか。省くといまの再生位置
+    private func syncText(force: Bool = false, atMs: Int64? = nil) {
         guard force || !isEditing else { return }
+        syncedClipId = store.selectedClip?.id
         guard let clip = store.selectedClip else { text = ""; return }
-        let pos = playerManager.currentTimeMs
+        let pos = atMs ?? playerManager.currentTimeMs
         segmentIndex = clip.textIndexAt(positionMs: pos)
         if clip.texts.indices.contains(segmentIndex) {
             let newText = clip.texts[segmentIndex].text

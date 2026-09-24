@@ -226,6 +226,10 @@ extension WaveformView {
         let candidateMs = (isLeft ? clip.startMs : clip.endMs) + direction * tickMs
         let newMs = clampTrimHandleMs(isLeft: isLeft, ms: candidateMs, clip: clip)
         panViewportIfNeeded(around: newMs, clip: clip)
+        // プレビューもつまみの位置のコマへ合わせる（指で動かしているとき＝dragTrimHandleと同じ）。
+        // 以前はここでだけ合わせておらず、指を端で止めて波形が流れている間、トリムは変わっていくのに
+        // プレビューは流れ始める前のコマのままだった（Android: 端のスクロールも指のときと同じ関数を通す）
+        playerManager.seek(to: newMs)
         if isLeft {
             store.updateTrim(startMs: newMs, endMs: clip.endMs)
             playerManager.updateTrimBounds(startMs: newMs, endMs: clip.endMs)
