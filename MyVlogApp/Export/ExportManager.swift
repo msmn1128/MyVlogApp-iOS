@@ -11,8 +11,9 @@ import Photos
 @Observable
 final class ExportManager {
     var isExporting: Bool   = false
-    var progress:    Double = 0
-    var message:     String = ""
+    // 進み具合と工程は、アプリを離れて書き出しているときのシステムの表示にも伝える（ExportKeepAlive）
+    var progress:    Double = 0 { didSet { keepAlive.update(progress: progress, message: message) } }
+    var message:     String = "" { didSet { keepAlive.update(progress: progress, message: message) } }
     /// 完了・中止・失敗を伝える一過性の通知（Android: VlogEvent.MessageのToast相当）。
     /// isExportingがfalseになってオーバーレイが消えた後も独立して表示され続ける。
     var toastMessage: String? = nil
@@ -21,7 +22,10 @@ final class ExportManager {
     @ObservationIgnored private var exportTask: Task<Void, Never>?
     /// アプリがバックグラウンドへ回っても書き出しを続けるための延命申請
     /// （Android: VlogExportServiceのフォアグラウンドサービス化に相当）
-    private let backgroundTask = BackgroundTaskGuard()
+    ///
+    /// iOS 26以降はシステムの「続ける作業」として申し込み、アプリを離れても最後まで書き出す。
+    /// それより前の端末では延長（約30秒）で動く（ExportKeepAlive）
+    @ObservationIgnored private let keepAlive = ExportKeepAlive()
     /// AVFoundationの読み書き・CGContextへの焼き込みなど重い処理だけを担当するactor。
     /// メインスレッドを塞がないよう、ExportManager（@MainActor）から切り離してある
     /// （詳しい経緯はExportWorker.swiftのコメントを参照）
@@ -94,10 +98,10 @@ final class ExportManager {
         isExporting = true
         progress    = 0
         message     = includeTitle ? "タイトルを作成中..." : "クリップを処理中..."
-        backgroundTask.begin(name: "VlogExport") { [weak self] in
-            // OSに与えられた延長時間を使い切った＝ここで畳むしかない
+        keepAlive.begin(title: "VLOGを書き出し中") { [weak self] in
+            // 続けられなくなった（システムの表示から中止された・延長を使い切った）＝ここで畳むしかない。
+            // 書き出しを止めれば、後始末（作業ファイルの削除）を終えたところで runExport が延長を返す
             self?.exportTask?.cancel()
-            self?.backgroundTask.end()
         }
         // 書き出しは「進捗を見せながら裏で進む長い処理」なので、画面の操作と同じ優先度では走らせない。
         // MainActorから素のTaskで起こすとuser-initiated相当になり、AVFoundationの内部スレッド
@@ -115,9 +119,11 @@ final class ExportManager {
     /// キャンセルは`Task.checkCancellation()`の地点まで届かず、実処理はしばらく走り続ける。
     /// ここで下ろしてしまうと、その間に「書き出し」を押せてしまい2本目が並行して始まる。
     /// 実際に終わったことを知っている`runExport`の後始末だけが状態を戻す。
+    ///
+    /// 延長（ExportKeepAlive）もここでは返さない。止まるまでと後始末の間にアプリを止められないよう、
+    /// runExport が終わったところで返す。
     func cancel() {
         exportTask?.cancel()
-        backgroundTask.end()
     }
 
     /// 完了・中止・失敗を画面上部/下部のトーストで一時的に知らせる（Android: ToastによるVlogEvent.Message相当）
@@ -162,6 +168,8 @@ final class ExportManager {
         // 書き出した動画自体の作成日時。写真アプリの並び順と日付表示に使われる
         // （Android: VlogExporter.export の createdAtMillis）
         let createdAt = Date()
+        // 最後まで書き出して写真に保存できたか（システムの表示に、成功・失敗として伝える）
+        var succeeded = false
         do {
             // 写真に保存してよいかを、書き出しを始める前に確かめる（下のensurePhotoLibraryAddAccess）
             try await Self.ensurePhotoLibraryAddAccess()
@@ -185,6 +193,7 @@ final class ExportManager {
             let savedMessage = "写真に保存しました\n\(displayName)"
             notifyCompletion(title: "書き出し完了", body: savedMessage)
             showMessage(savedMessage)
+            succeeded = true
         } catch is CancellationError {
             update("")
             showMessage("書き出しを中止しました")
@@ -201,7 +210,7 @@ final class ExportManager {
         // 実際に終わったここだけが状態を戻す（cancel()は要求するだけ。理由はcancel()のコメント）
         exportTask  = nil
         isExporting = false
-        backgroundTask.end()
+        keepAlive.end(success: succeeded)
     }
 
     /// タイトルカード生成〜各クリップの処理までを1本にまとめたもの（runExportから抽出）。

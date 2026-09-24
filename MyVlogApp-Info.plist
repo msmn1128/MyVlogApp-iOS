@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	書き出しを、アプリを離れても続けるための作業の名前（ExportKeepAlive）。
+	ほかの項目はビルド設定（INFOPLIST_KEY_*）から自動で作られ、このファイルと合わさる。
+	配列の項目はビルド設定では書けないので、ここにだけ置く。
+	このファイルはアプリのフォルダ（MyVlogApp/）の外に置く。中に置くと、フォルダと同期している
+	プロジェクトが画像などと同じ「アプリに入れるファイル」として扱い、Info.plistが二重になって
+	ビルドが通らない。
+	-->
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).export.*</string>
+	</array>
+</dict>
+</plist>

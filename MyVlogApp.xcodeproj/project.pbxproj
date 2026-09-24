@@ -402,6 +402,7 @@
 				DEVELOPMENT_TEAM = 6TQLSED9BP;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "MyVlogApp-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = MyVlog.;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photo-video";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "書き出した動画をカメラロールに保存します";
@@ -438,6 +439,7 @@
 				DEVELOPMENT_TEAM = 6TQLSED9BP;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "MyVlogApp-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = MyVlog.;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photo-video";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "書き出した動画をカメラロールに保存します";
