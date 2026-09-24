@@ -7,6 +7,9 @@ struct TextInputView: View {
     @Environment(ExportManager.self) private var exportManager
     @Environment(\.colorScheme) var colorScheme
 
+    /// 見出し（「ひとこと」と区間の番号）を出すか。縦に短い画面でキーボードを出している間は畳む（ContentView）
+    var showHeader: Bool = true
+
     @State private var text:         String = ""
     @State private var segmentIndex: Int    = 0
     @State private var isEditing:    Bool   = false
@@ -14,24 +17,26 @@ struct TextInputView: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 6) {
-                // Segment indicator（Android: EditorPane、常に「ひとこと」見出し＋区間バッジ）
-                HStack(spacing: 6) {
-                    Text("ひとこと")
-                        .vlogFont(14, weight: .semibold)
-                        .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
-                    if let clip = store.selectedClip, clip.texts.count > 1 {
-                        Text("\(segmentIndex + 1)")
-                            .vlogFont(9, weight: .bold)
-                            .foregroundStyle(AppColors.onSplitLine(colorScheme))
-                            .padding(.horizontal, 4).padding(.vertical, 1)
-                            .background(Capsule().fill(AppColors.splitLine(colorScheme)))
-                        Text("／\(clip.texts.count) 区間目を編集中")
-                            .vlogFont(11)
+                if showHeader {
+                    // Segment indicator（Android: EditorPane、常に「ひとこと」見出し＋区間バッジ）
+                    HStack(spacing: 6) {
+                        Text("ひとこと")
+                            .vlogFont(14, weight: .semibold)
                             .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
+                        if let clip = store.selectedClip, clip.texts.count > 1 {
+                            Text("\(segmentIndex + 1)")
+                                .vlogFont(9, weight: .bold)
+                                .foregroundStyle(AppColors.onSplitLine(colorScheme))
+                                .padding(.horizontal, 4).padding(.vertical, 1)
+                                .background(Capsule().fill(AppColors.splitLine(colorScheme)))
+                            Text("／\(clip.texts.count) 区間目を編集中")
+                                .vlogFont(11)
+                                .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
+                        }
+                        Spacer()
                     }
-                    Spacer()
+                    .padding(.horizontal, 4)
                 }
-                .padding(.horizontal, 4)
 
                 // EagerFirstResponderTextView を使うことで、SwiftUIのジェスチャー配送と
                 // UIKitのfirst responder化のタイムラグによる「1回目タップでキーボードが

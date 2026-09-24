@@ -15,6 +15,8 @@ struct ContentView: View {
 
     // Layout
     @State private var isLandscape: Bool = false
+    /// キーボードに左右されない画面の高さ（isLandscapeと同じ測り方）。縦に短い画面かの判断に使う
+    @State private var windowHeight: CGFloat = 0
 
     // Sheet / alert presentation
     @State private var showSavedProjects:  Bool = false
@@ -99,9 +101,13 @@ struct ContentView: View {
         .background(
             GeometryReader { geo in
                 Color.clear
-                    .onAppear { isLandscape = geo.size.width > geo.size.height }
+                    .onAppear {
+                        isLandscape = geo.size.width > geo.size.height
+                        windowHeight = geo.size.height
+                    }
                     .onChange(of: geo.size) { _, newSize in
                         isLandscape = newSize.width > newSize.height
+                        windowHeight = newSize.height
                     }
             }
             .ignoresSafeArea(.keyboard, edges: .bottom)
@@ -230,6 +236,20 @@ struct ContentView: View {
     }
     private var editorHeightRatio: CGFloat { 1 - timelineHeightRatio }
 
+    /// これより縦に短い画面（横向きのiPhoneなど）では、キーボードを出している間タイムラインに加えて
+    /// ひとこと欄の見出しも畳む（Android: COMPACT_HEIGHT。Materialの区分でcompactにあたる480）
+    private static let compactHeight: CGFloat = 480
+    private var isCompactHeight: Bool { windowHeight > 0 && windowHeight < Self.compactHeight }
+
+    /// キーボードを出している間、次の2つの画面でタイムラインを畳み、ひとこと欄に高さを回す
+    /// （Android: VlogAppScreen の showTimeline）。
+    /// - 縦に短い画面：残りが百数十ptしかなく、比率を変えてもタイムラインとひとこと欄が両方潰れ、
+    ///   打った文字が見えない
+    /// - 横2ペイン：右ペインのタイムライン欄が見出しと操作バーだけの高さまで縮み、「2s」「4s」が切れる
+    private var showTimeline: Bool { !((isCompactHeight || isLandscape) && isKeyboardVisible) }
+    /// 縦に短い画面では、ひとこと欄の見出しも畳む。見出しのぶんだけでも、入力欄が1行ぶんの高さに届かない
+    private var showEditorHeader: Bool { !(isCompactHeight && isKeyboardVisible) }
+
     /// タイムライン＋ひとこと欄。縦画面・横画面どちらでも同じ内容・比率なので共通化してある
     /// （末尾の左右paddingだけ呼び出し側で変える）。
     /// Android版の timelineWeight(0.40) : editorWeight(0.18) と同じ比率で
@@ -240,11 +260,14 @@ struct ContentView: View {
             let available = max(0, geo.size.height - spacing)
 
             VStack(spacing: spacing) {
-                TimelineView()
-                    .frame(height: available * timelineHeightRatio)
-
-                TextInputView()
-                    .frame(height: available * editorHeightRatio)
+                if showTimeline {
+                    TimelineView()
+                        .frame(height: available * timelineHeightRatio)
+                }
+                // ひとこと欄は分岐の外に1つだけ置く。分岐ごとに書くと別のビューとして作り直され、
+                // 入力中のUITextViewがフォーカスを失ってキーボードが閉じる（閉じるとまた開いて…を繰り返す）
+                TextInputView(showHeader: showEditorHeader)
+                    .frame(height: showTimeline ? available * editorHeightRatio : geo.size.height)
             }
         }
     }

@@ -73,6 +73,34 @@ final class MyVlogAppUITests: XCTestCase {
         attachScreenshot(app, name: "keyboard_closed")
     }
 
+    /// 横向きのiPhoneでキーボードを出すと、タイムラインを畳んでひとこと欄に高さを回す。
+    /// キーボードは開いたまま（ひとこと欄を作り直してフォーカスを失わない）で、閉じればタイムラインが戻る
+    @MainActor
+    func testTimelineFoldsWhileTypingInLandscape() throws {
+        let app = launchApp(clipCount: 1)
+        XCUIDevice.shared.orientation = .landscapeLeft
+        defer { XCUIDevice.shared.orientation = .portrait }
+        XCTAssertTrue(app.staticTexts["タイムライン"].waitForExistence(timeout: 5))
+
+        app.textViews.firstMatch.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "キーボードが開かなかった")
+        XCTAssertTrue(
+            waitUntil(timeout: 3) { !app.staticTexts["タイムライン"].exists },
+            "キーボードを出してもタイムラインが畳まれない"
+        )
+        // 畳んだあとも入力欄から抜けていない
+        RunLoop.current.run(until: Date().addingTimeInterval(1))
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "タイムラインを畳んだらキーボードが閉じた")
+        app.typeText("横")
+        attachScreenshot(app, name: "landscape_typing")
+
+        app.buttons["keyboardDone"].tap()
+        XCTAssertTrue(
+            app.staticTexts["タイムライン"].waitForExistence(timeout: 5),
+            "キーボードを閉じてもタイムラインが戻らない"
+        )
+    }
+
     /// クリップが無いとき、ひとこと欄を触ってもキーボードは開かない（打った文字の行き先が無い）
     @MainActor
     func testHitokotoIsNotEditableWithoutClips() throws {
