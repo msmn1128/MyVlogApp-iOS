@@ -82,7 +82,7 @@ enum UITestSupport {
     /// UIテスト実行時だけ、起動のたびに空になる保存領域を返す。通常起動ではnil
     static func disposableDefaults() -> UserDefaults? {
         guard isUITestRun else { return nil }
-        let name = "com.masamune.myvlogapp.uitest"
+        let name = "com.msmn1128.myvlogapp.uitest"
         // 前回のテスト実行が残した内容を消してから始める（前回の続きを確かめるテストでは残す）
         if !ProcessInfo.processInfo.arguments.contains(keepSavedStateArgument) {
             UserDefaults.standard.removePersistentDomain(forName: name)

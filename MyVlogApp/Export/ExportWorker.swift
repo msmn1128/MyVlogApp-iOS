@@ -32,7 +32,7 @@ actor ExportWorker {
     /// 書き出しは「進捗を見せながら裏で進む長い処理」なので、utilityが本来の優先度
     /// （ExportManagerが書き出しのTaskをutilityで起こしているのと揃えてある）。
     private nonisolated let queue = DispatchSerialQueue(
-        label: "com.masamune.myvlogapp.export", qos: .utility
+        label: "com.msmn1128.myvlogapp.export", qos: .utility
     )
 
     nonisolated var unownedExecutor: UnownedSerialExecutor { queue.asUnownedSerialExecutor() }

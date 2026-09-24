@@ -15,7 +15,7 @@ import Photos
 /// 保証されない。デバウンスをまたいで続けて2回走ると、古いスナップショットのほうが
 /// あとからUserDefaultsへ届き、直前の編集を巻き戻して保存してしまう形になりえた。
 /// 直列キューは積んだ順にそのまま実行されるので、最後に投げた内容が必ず最後に残る。
-private nonisolated let autoSaveQueue = DispatchQueue(label: "com.masamune.myvlogapp.autosave", qos: .utility)
+private nonisolated let autoSaveQueue = DispatchQueue(label: "com.msmn1128.myvlogapp.autosave", qos: .utility)
 
 /// `UserDefaults`を別スレッドへ渡すための入れ物。
 ///
