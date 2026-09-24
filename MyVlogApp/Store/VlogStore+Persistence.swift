@@ -71,11 +71,14 @@ extension VlogStore {
     /// （PHAssetの確認は件数ぶん往復せず1回にまとめてある。`validClips`参照）。
     /// 唯一重い「撮影時刻の取り直し」は非同期のまま、init側から別に呼んでいる。
     func restoreAutoSave() {
+        // 1件ずつ読む。配列ごと読んでいた頃は、1件壊れているだけで前回の続きが丸ごと復元されず、
+        // 次の自動保存で空の一覧が書き戻されて消えていた（LossyList）
         guard let data   = defaults.data(forKey: autoSaveKey + "_clips"),
-              let saved  = try? JSONDecoder().decode([VlogClip].self, from: data) else { return }
+              let saved  = try? JSONDecoder().decode(LossyList<VlogClip>.self, from: data) else { return }
         let savedIndex   = defaults.object(forKey: autoSaveKey + "_index") as? Int
 
-        let (loaded, excluded) = validClips(from: saved)
+        let (loaded, unreadable) = validClips(from: saved.elements)
+        let excluded = unreadable + saved.droppedCount
         clips = loaded
         if let si = savedIndex, loaded.indices.contains(si) { selectedIndex = si }
         else if !loaded.isEmpty { selectedIndex = 0 }
@@ -220,7 +223,9 @@ extension VlogStore {
 
     func loadProject(_ project: SavedProject) {
         guard !refuseWhileImporting() else { return }
-        let (loaded, excluded) = validClips(from: project.clips)
+        let (loaded, unreadable) = validClips(from: project.clips)
+        // 保存データの中で壊れていたクリップも「見つからなかった」に数える（Android: readableClips）
+        let excluded = unreadable + project.droppedClipCount
 
         // 保存内の動画が1本も読めないのに置き換えると、作業中のタイムラインが空になってしまう。
         // その場合は置き換えずに理由だけ知らせる（Android: canReplaceWithProject）
@@ -274,8 +279,10 @@ extension VlogStore {
 
     /// VlogStore.swift本体のinit()から呼ぶためinternal
     func loadSavedProjectsFromDefaults() {
+        // 1件ずつ読む。配列ごと読んでいた頃は、1件壊れているだけで一覧が空に見え、次に保存したとき
+        // 残りの全件が上書きされて消えていた（LossyList。Android: readProjects）
         guard let data     = defaults.data(forKey: savedProjectsKey),
-              let projects = try? JSONDecoder().decode([SavedProject].self, from: data) else { return }
-        savedProjects = projects.sorted { $0.savedAt > $1.savedAt }
+              let projects = try? JSONDecoder().decode(LossyList<SavedProject>.self, from: data) else { return }
+        savedProjects = projects.elements.sorted { $0.savedAt > $1.savedAt }
     }
 }

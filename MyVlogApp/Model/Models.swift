@@ -369,4 +369,29 @@ struct SavedProject: Codable, Identifiable {
     let clipCount: Int
     let totalMs: Int64
     var clips: [VlogClip]
+    /// 読み込むときに壊れていて飛ばしたクリップの本数。保存はしない。
+    /// 読み出したときに「N件の動画は見つかりませんでした」へ数えるため（Android: readableClipsのdropped）
+    var droppedClipCount: Int = 0
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, savedAt, clipCount, totalMs, clips
+    }
+}
+
+extension SavedProject {
+    /// クリップは1件ずつ読む（理由はLossyList）。extensionに置くのは、型の本体に書くと
+    /// 自動で作られる全項目のinitが消えるため
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let clips = try c.decode(LossyList<VlogClip>.self, forKey: .clips)
+        self.init(
+            id:        try c.decode(Int64.self, forKey: .id),
+            name:      try c.decode(String.self, forKey: .name),
+            savedAt:   try c.decode(Int64.self, forKey: .savedAt),
+            clipCount: try c.decode(Int.self, forKey: .clipCount),
+            totalMs:   try c.decode(Int64.self, forKey: .totalMs),
+            clips:     clips.elements,
+            droppedClipCount: clips.droppedCount
+        )
+    }
 }

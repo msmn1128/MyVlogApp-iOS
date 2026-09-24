@@ -556,6 +556,71 @@ struct VlogStoreProjectsTests {
         #expect(!store.canUndo)
     }
 
+    /// 使い捨ての保存領域と、実在するファイルを指すクリップ（validClipsに落とされない）
+    private func restorableClipJSON(_ file: URL) throws -> Any {
+        var clip = TestClip.make(shotAtMillis: 100)
+        clip.fileURL = file
+        return try JSONSerialization.jsonObject(with: JSONEncoder().encode(clip))
+    }
+
+    @Test("前回の続きに壊れたクリップが混ざっていても、読める分は復元して件数を知らせる")
+    func restoreSkipsBrokenClip() throws {
+        let suiteName = "VlogStoreTests.restoreSkipsBrokenClip"
+        UserDefaults.standard.removePersistentDomain(forName: suiteName)
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("restore-\(UUID().uuidString).mov")
+        try Data([0x00]).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        // 回帰テスト: 配列ごと読んでいた頃は、1件壊れているだけで1本も復元されなかった
+        let array: [Any] = [try restorableClipJSON(file), ["timeText": 3], NSNull()]
+        defaults.set(try JSONSerialization.data(withJSONObject: array), forKey: "vlog_autosave_v1_clips")
+
+        let store = VlogStore(defaults: defaults)
+
+        #expect(store.clips.count == 1)
+        #expect(store.toastMessage == Formatters.restoreDroppedMessage(dropped: 2))
+    }
+
+    @Test("一時保存の一覧に壊れた1件があっても、ほかの保存は一覧に残る")
+    func projectListSkipsBrokenEntry() throws {
+        let suiteName = "VlogStoreTests.projectListSkipsBrokenEntry"
+        UserDefaults.standard.removePersistentDomain(forName: suiteName)
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let good = SavedProject(id: 1, name: "残る", savedAt: 1, clipCount: 0, totalMs: 0, clips: [])
+        let array: [Any] = [
+            try JSONSerialization.jsonObject(with: JSONEncoder().encode(good)),
+            ["id": "壊れている"]
+        ]
+        defaults.set(try JSONSerialization.data(withJSONObject: array), forKey: "vlog_saved_projects_v1")
+
+        let store = VlogStore(defaults: defaults)
+
+        #expect(store.savedProjects.map(\.name) == ["残る"])
+    }
+
+    @Test("一時保存の中の壊れたクリップは、読み出したとき「見つからなかった」に数える")
+    func brokenClipInProjectCountsAsDropped() throws {
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("project-\(UUID().uuidString).mov")
+        try Data([0x00]).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let json: [String: Any] = [
+            "id": 1, "name": "保存", "savedAt": 1, "clipCount": 2, "totalMs": 0,
+            "clips": [try restorableClipJSON(file), ["broken": true]]
+        ]
+        let project = try JSONDecoder().decode(
+            SavedProject.self, from: JSONSerialization.data(withJSONObject: json)
+        )
+        let store = makeStore()
+
+        store.loadProject(project)
+
+        #expect(store.clips.count == 1)
+        #expect(store.toastMessage == Formatters.projectLoadedMessage(dropped: 1))
+    }
+
     @Test("読み出しは「もとに戻す」で読み出す前へ戻せる")
     func loadIsUndoable() {
         let store = makeStore()
