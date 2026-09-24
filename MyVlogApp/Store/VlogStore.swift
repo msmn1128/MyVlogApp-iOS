@@ -337,7 +337,12 @@ final class VlogStore {
             return nil
         }
 
-        let newSeg = TextSegment(startMs: positionMs, text: TextSegment.defaultText)
+        // 後半は空文字にする（動画追加時の初期区間と同じ扱い）。前半の文字を複製すると
+        // 分割できたのかが入力欄から分からず、「ひとこと」を入れると未入力のまま
+        // 書き出したときに焼き込まれる。空なら入力欄にはグレーの案内文字が出るので
+        // 未入力なのが分かり、分割自体は区間バッジと波形の区切り線で分かる
+        // （Android: TimelineStore.splitTextAtPlayhead）
+        let newSeg = TextSegment(startMs: positionMs)
         let insertIdx = clip.texts.firstIndex(where: { $0.startMs > positionMs }) ?? clip.texts.count
         updateSelected { c in
             c.texts.insert(newSeg, at: insertIdx)

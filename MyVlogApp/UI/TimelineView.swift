@@ -187,10 +187,10 @@ private struct ClipTile: View {
         Formatters.durationLabel(ms: ms)
     }
 
-    /// 空文字（ひとことを全消しした状態）なら、プレースホルダーに戻して表示する
+    /// 未入力（空文字か空白だけ）なら、入力欄の案内文字と同じ「ひとこと」を目印に出す
     /// （Android: TimelineSection.ktの`.ifBlank { DEFAULT_HITOKOTO }`と同じ）
     private var hitokotoTileText: String {
         let text = clip.textAt(positionMs: clip.startMs)
-        return text.isEmpty ? "ひとこと" : text
+        return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? TextSegment.defaultText : text
     }
 }

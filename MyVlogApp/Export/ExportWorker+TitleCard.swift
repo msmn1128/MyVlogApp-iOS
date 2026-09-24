@@ -29,7 +29,7 @@ extension ExportWorker {
         writer.startWriting()
         writer.startSession(atSourceTime: .zero)
 
-        let titleLines = titleText.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+        let titleLines = VlogLayout.captionLines(titleText).filter { !$0.isEmpty }
         do {
             for frameIdx in 0..<totalFrames {
                 try Task.checkCancellation()

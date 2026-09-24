@@ -244,7 +244,7 @@ struct VlogStoreEditingTests {
 
         #expect(index == 1)
         #expect(store.selectedClip?.texts.count == 2)
-        #expect(store.selectedClip?.texts[1].text == TextSegment.defaultText)
+        #expect(store.selectedClip?.texts[1].text == "")
         #expect(store.toastMessage == nil)
     }
 

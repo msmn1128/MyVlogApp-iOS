@@ -7,9 +7,13 @@ import Foundation
 /// 詳しい経緯はFontLoader.swiftのコメントを参照）
 nonisolated struct TextSegment: Codable, Equatable, Hashable {
     var startMs: Int64 = 0
-    var text: String = "ひとこと"
+    /// 既定は空文字。以前は「ひとこと」そのものを入れていたため、動画を追加して
+    /// 触らずに書き出すと、文字通り「ひとこと」がプレビューと動画に焼き込まれていた
+    /// （Android: TextSegment）。
+    var text: String = ""
 
-    /// ひとことの初期値。区間を分割したときの後半にもこれが入る（Android: DEFAULT_HITOKOTO）
+    /// 未入力の入力欄に出すグレーの案内文字と、タイムラインのタイルで未入力の目印に
+    /// 出す文字。値としては使わない（Android: DEFAULT_HITOKOTO）
     static let defaultText = "ひとこと"
 
     /// これ以上は詰められない区間の長さ。短すぎる区間は読む前に消えてしまう

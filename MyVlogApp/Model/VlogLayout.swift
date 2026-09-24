@@ -66,4 +66,15 @@ nonisolated enum VlogLayout {
         let totalHeight = lineHeight * CGFloat(lineCount)
         return canvasHeight * 0.5 - totalHeight / 2
     }
+
+    /// ひとこと・タイトルを行に分ける。空行も1行として残す（Android: String.lines()）。
+    ///
+    /// `split(separator: "\n")`では足りない。Swiftでは"\r\n"が1つのCharacterなので"\n"と
+    /// 一致せず、貼り付けた文字の\r\nでは行が分かれない。分かれないまま1行ぶんの枠に
+    /// 描くと、UIKit/SwiftUIは中の\r\n（単独の\rも）で折り返すため、2行が1行の高さに
+    /// 押し込まれて、ブロックの中央揃えも崩れる。プレビューと書き出しの両方がここを通る
+    static func captionLines(_ text: String) -> [String] {
+        text.split(omittingEmptySubsequences: false) { $0 == "\n" || $0 == "\r" || $0 == "\r\n" }
+            .map(String.init)
+    }
 }

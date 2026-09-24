@@ -195,7 +195,7 @@ extension ExportWorker {
         let font = UIFont(name: VlogFonts.logoTypeName, size: VlogLayout.hitokotoFontSize)
             ?? UIFont.boldSystemFont(ofSize: VlogLayout.hitokotoFontSize)
         let lineH = VlogLayout.hitokotoFontSize + VlogLayout.hitokotoLineGap
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        let lines = VlogLayout.captionLines(text)
         // PreviewViewのhitokotoOverlayと同じ計算をVlogLayout.hitokotoBlockTopに共通化している
         let topY  = VlogLayout.hitokotoBlockTop(
             lineCount: lines.count, canvasHeight: canvas.height,

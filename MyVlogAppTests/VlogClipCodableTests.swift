@@ -87,7 +87,7 @@ struct VlogClipCodableTests {
         let clip = try decode(baseJSON(texts: []))
         #expect(clip.texts.count == 1)
         #expect(clip.texts[0].startMs == 0)
-        #expect(clip.texts[0].text == TextSegment.defaultText)
+        #expect(clip.texts[0].text == "")
     }
 
     @Test("正規化後は textAt がどの位置でも文字を拾える")

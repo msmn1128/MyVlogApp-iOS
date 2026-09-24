@@ -37,7 +37,9 @@ struct TextInputView: View {
                 // 開かない」問題を根本的に解消する。
                 NativeTextView(
                     text: $text,
-                    placeholder: "",
+                    // 未入力のときだけ「ひとこと」をグレーで案内表示する。見た目だけで、
+                    // 実際の値は空文字のまま（プレビュー・書き出しには何も焼き込まれない）
+                    placeholder: TextSegment.defaultText,
                     onBeginEditing: {
                         isEditing = true
                         playerManager.pause()
@@ -84,6 +86,16 @@ struct TextInputView: View {
             if !isEditing { syncText() }
         }
         .onAppear { syncText() }
+        // 打っている間は再生させない。入力を始めたら止める（onBeginEditing）だけでは、
+        // キーボードを出したままプレビューをタップすると再生が始まり、プレビューには
+        // 別の区間の文字が流れているのに入力欄は編集を始めた区間のまま、という
+        // 食い違った状態になる。再生が始まったら入力欄から抜ける（Android: EditorPane）
+        .onChange(of: playerManager.isPlaying) { _, playing in
+            guard playing, isEditing else { return }
+            UIApplication.shared.sendAction(
+                #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil
+            )
+        }
     }
 
     private func syncText() {
@@ -130,13 +142,16 @@ struct NativeTextView: UIViewRepresentable {
         }
 
         func textViewDidBeginEditing(_ textView: UITextView) {
-            placeholderLabel?.isHidden = !textView.text.isEmpty
+            // タップした瞬間（打ち始める前）に案内文字を消す。空欄のまま残すと、
+            // カーソルと「ひとこと」が重なって、すでに入力済みのように見える
+            // （Android: EditorPaneのplaceholderもフォーカス中は出さない）
+            placeholderLabel?.isHidden = true
             parent.onBeginEditing?()
         }
 
         func textViewDidChange(_ textView: UITextView) {
             parent.text = textView.text
-            placeholderLabel?.isHidden = !textView.text.isEmpty
+            placeholderLabel?.isHidden = textView.isFirstResponder || !textView.text.isEmpty
             parent.onChange?(textView.text)
         }
 
@@ -210,7 +225,7 @@ struct NativeTextView: UIViewRepresentable {
         context.coordinator.parent = self
         if uiView.text != text {
             uiView.text = text
-            context.coordinator.placeholderLabel?.isHidden = !text.isEmpty
+            context.coordinator.placeholderLabel?.isHidden = uiView.isFirstResponder || !text.isEmpty
         }
         context.coordinator.placeholderLabel?.text = placeholder
     }

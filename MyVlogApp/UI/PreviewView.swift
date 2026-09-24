@@ -33,6 +33,8 @@ struct PreviewView: View {
                 }
             }
             .animation(.default, value: playerManager.isLoading)
+            // 折り返さないひとことがキャンバスの外へはみ出して、周りの画面に重ならないよう切る
+            .clipped()
         }
     }
 }
@@ -109,7 +111,7 @@ private struct PreviewCaptionLayer: View {
     }
 
     private func hitokotoOverlay(text: String) -> some View {
-        let lines      = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        let lines      = VlogLayout.captionLines(text)
         let fontSize   = VlogLayout.hitokotoFontSize * scale
         let lineGap    = VlogLayout.hitokotoLineGap * scale
         let lineHeight = fontSize + lineGap
@@ -130,6 +132,11 @@ private struct PreviewCaptionLayer: View {
                     Text(line)
                         .font(.custom(VlogFonts.logoTypeName, size: fontSize))
                         .foregroundStyle(.white)
+                        // 折り返さない。書き出し（drawHitokoto）は1行を実寸のまま中央へ描き、
+                        // キャンバスより長ければ左右均等にはみ出す。プレビューだけキャンバス幅で
+                        // 折り返すと、画面では収まって見えるのに書き出した動画では左右が切れる
+                        // （Android: PreviewSection.ktのsoftWrap = false）
+                        .fixedSize()
                         .position(x: canvas.width / 2, y: y)
                 }
             }
