@@ -14,6 +14,12 @@ struct ActionButtons: View {
 
     @Environment(\.colorScheme) var colorScheme
 
+    /// 「動画を追加」と保存。読み込み中に押し直すと同じ動画を並行して読むことになり、
+    /// 読み込み中のタイムラインは途中の状態なので保存も読み出しもさせない（Android: ActionButtons）
+    private var canEdit: Bool { !exportManager.isExporting && !store.isImporting }
+    /// 書き出し。読み込み中の動画はまだタイムラインに入っていないので、その間は始めさせない
+    private var canExport: Bool { !store.clips.isEmpty && !store.isImporting }
+
     var body: some View {
         HStack(spacing: 8) {
             Menu {
@@ -27,20 +33,20 @@ struct ActionButtons: View {
                 Text("動画を追加")
                     .lineLimit(1)
                     .frame(maxWidth: .infinity)
-                    .tonalPill(enabled: !exportManager.isExporting, colorScheme: colorScheme)
-                    .animation(.default, value: exportManager.isExporting)
+                    .tonalPill(enabled: canEdit, colorScheme: colorScheme)
+                    .animation(.default, value: canEdit)
             }
-            .disabled(exportManager.isExporting)
+            .disabled(!canEdit)
 
             Button {
                 showSavedProjects = true
             } label: {
                 Image(systemName: "doc.fill")
                     .vlogFont(VlogLayout.toolbarIconSize * 0.82)
-                    .tonalCircle(enabled: !exportManager.isExporting, colorScheme: colorScheme)
-                    .animation(.default, value: exportManager.isExporting)
+                    .tonalCircle(enabled: canEdit, colorScheme: colorScheme)
+                    .animation(.default, value: canEdit)
             }
-            .disabled(exportManager.isExporting)
+            .disabled(!canEdit)
             .accessibilityLabel("編集内容の保存と読み出し")
 
             // 書き出し⇔中止の入れ替わりが瞬時に切り替わらず、フェードで橋渡しする
@@ -65,30 +71,30 @@ struct ActionButtons: View {
                         .lineLimit(1)
                         .frame(maxWidth: .infinity)
                         // Android版ExportButtonは動画を追加と違いprimary塗り（主役の操作として強調）
-                        .primaryPill(enabled: !store.clips.isEmpty, colorScheme: colorScheme)
-                        .animation(.default, value: store.clips.isEmpty)
+                        .primaryPill(enabled: canExport, colorScheme: colorScheme)
+                        .animation(.default, value: canExport)
                         .contentShape(Rectangle())
                         .onTapGesture {
-                            guard !store.clips.isEmpty else { return }
+                            guard canExport else { return }
                             showTitleDialog = true
                         }
                         .onLongPressGesture(minimumDuration: 0.5) {
-                            guard !store.clips.isEmpty else { return }
+                            guard canExport else { return }
                             exportManager.startExport(clips: store.clips, timelineMuted: store.timelineMuted, includeTitle: false)
                         }
                         // クリップが無いときは押せない。見た目（primaryPillのenabled）だけでなく
                         // 実際に無効化しておくことで、VoiceOverにも「使用できない」と伝わる
-                        .disabled(store.clips.isEmpty)
+                        .disabled(!canExport)
                         // VoiceOver用のラベルとアクション（Android: ExportButtonのonClickLabel/onLongClickLabel相当）。
                         // Buttonではなくジェスチャーで組んでいるので、ボタンであることは自分で伝える
                         .accessibilityLabel("書き出し")
                         .accessibilityAddTraits(.isButton)
                         .accessibilityAction {
-                            guard !store.clips.isEmpty else { return }
+                            guard canExport else { return }
                             showTitleDialog = true
                         }
                         .accessibilityAction(named: "タイトルなしで書き出し") {
-                            guard !store.clips.isEmpty else { return }
+                            guard canExport else { return }
                             exportManager.startExport(clips: store.clips, timelineMuted: store.timelineMuted, includeTitle: false)
                         }
                         .transition(.opacity)

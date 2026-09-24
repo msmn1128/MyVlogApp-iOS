@@ -37,32 +37,32 @@ struct ToastView: View {
     }
 }
 
-// MARK: - Import overlay
+// MARK: - Import progress
 
-struct ImportOverlayView: View {
+/// 動画を読み込んでいる間の進捗。書き出しの進捗（ExportProgressView）と同じく、操作ボタンの下に
+/// 差し込むだけにする（Android: PreviewSection.kt AddProgress）。
+///
+/// 以前は画面全体を覆うオーバーレイで、読み込みが終わるまで編集できなかった。読み込んだ動画は
+/// 終わったときの一覧へ撮影日時順に差し込むので、その間に編集していても壊れない。追加・保存・
+/// 書き出しだけは、読み込み中のタイムラインが途中の状態なので止める（ActionButtons）。
+struct ImportProgressView: View {
     let progress: Double
     let message: String
 
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
-        ZStack {
-            Color.black.opacity(0.55).ignoresSafeArea()
-            VStack(spacing: 16) {
-                ProgressView(value: progress)
-                    .progressViewStyle(.linear)
-                    .tint(AppColors.primary)
-                    .frame(width: 260)
-                Text(message)
-                    .foregroundStyle(.white)
-                    .font(.subheadline)
-            }
-            .padding(28)
-            .background(.regularMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 16))
+        VStack(alignment: .leading, spacing: 4) {
+            ProgressView(value: progress)
+                .progressViewStyle(.linear)
+                .tint(AppColors.primary(colorScheme))
+            Text(message)
+                .vlogFont(12)
+                .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
+                .contentTransition(.numericText())
         }
-        // 読み込み中は画面全体を覆って操作を受け付けないので、VoiceOverにも
-        // 「いま何が起きているか」だけを1項目で伝え、後ろの編集画面は読ませない
+        // 進捗バーと文言を1つの項目にして、何の進捗かを読み上げる
         .accessibilityElement(children: .ignore)
-        .accessibilityAddTraits(.isModal)
         .accessibilityLabel("動画を読み込み中")
         .accessibilityValue(message)
     }

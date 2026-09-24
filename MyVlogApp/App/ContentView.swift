@@ -47,11 +47,6 @@ struct ContentView: View {
                     portraitLayout(size: sz)
                 }
 
-                if store.isImporting {
-                    ImportOverlayView(progress: importProgress, message: importMessage)
-                        .transition(.opacity)
-                }
-
                 // 保存/読み出しダイアログも他のオーバーレイと同じくフェードで出入りさせる
                 if showSavedProjects {
                     SavedProjectsView(onDismiss: { showSavedProjects = false })
@@ -205,16 +200,26 @@ struct ContentView: View {
             )
             .padding(.horizontal, 12)
 
-            if exportManager.isExporting {
-                ExportProgressView()
-                    .padding(.horizontal, 12)
-                    .transition(.opacity)
-            }
+            progressViews
+                .padding(.horizontal, 12)
 
             timelineAndEditor()
                 .padding(.horizontal, 12)
         }
         .padding(.vertical, 10)
+    }
+
+    /// 動画の読み込みと書き出しの進捗（Android: AddProgress / ExportProgress）。操作ボタンの下に差し込む
+    @ViewBuilder
+    private var progressViews: some View {
+        if store.isImporting {
+            ImportProgressView(progress: importProgress, message: importMessage)
+                .transition(.opacity)
+        }
+        if exportManager.isExporting {
+            ExportProgressView()
+                .transition(.opacity)
+        }
     }
 
     /// Android: VlogAppScreen.timelineWeight / editorWeight（imeVisible=false）を正規化した比率
@@ -258,10 +263,7 @@ struct ContentView: View {
                     showTitleDialog:   $showTitleDialog
                 )
 
-                if exportManager.isExporting {
-                    ExportProgressView()
-                        .transition(.opacity)
-                }
+                progressViews
 
                 Spacer()
             }

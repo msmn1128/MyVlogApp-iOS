@@ -25,8 +25,8 @@ final class VlogStore {
     /// タイムライン全体のミュート。クリップ個別の`isMuted`とは独立していて、
     /// こちらがonの間はどのクリップも音声が出ない（Android: VlogViewModel.timelineMuted）
     var timelineMuted: Bool
-    /// 動画を読み込み中（メタデータを読んでいる間）か。オーバーレイの表示に加えて、
-    /// 一時保存の保存・読み出しを断る判断にも使う（Android: VlogViewModel.isAdding）。
+    /// 動画を読み込み中（メタデータを読んでいる間）か。進捗の表示に加えて、追加・書き出し・
+    /// 一時保存の保存と読み出しを止める判断にも使う（Android: VlogViewModel.isAdding）。
     /// 以前はContentViewの@Stateだったため、SavedProjectsViewからは見えなかった。
     var isImporting: Bool = false
     /// 動画を開けなくなったクリップのid（移動・削除された、写真へのアクセスが取り消されたなど）。
