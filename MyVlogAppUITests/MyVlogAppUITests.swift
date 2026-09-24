@@ -132,6 +132,31 @@ final class MyVlogAppUITests: XCTestCase {
         attachScreenshot(app, name: "license")
     }
 
+    /// 入力欄をタップした直後に打っても、打った文字が1文字も落ちない。
+    ///
+    /// Android版（v1.8で修正）では、外からの変更を入力欄へ反映する処理が古い文字で入力欄を巻き戻し、
+    /// タップ直後に打つと数文字に1文字が消えていた。iOSは打った文字を入力欄と保存側へ同じ瞬間に流すので
+    /// 起きない作りだが、同じ手順（タップ→すぐ打つ→閉じる、を3回）で守っておく
+    @MainActor
+    func testTypingRightAfterTappingKeepsEveryCharacter() throws {
+        let app = launchApp(clipCount: 1)
+        let textView = app.textViews.firstMatch
+        let words = (1...3).map { "Hello\($0)" }
+        for word in words {
+            textView.tap()
+            app.typeText(word)
+            app.buttons["keyboardDone"].tap()
+            XCTAssertTrue(waitUntil(timeout: 3) { !app.keyboards.firstMatch.exists })
+        }
+        // どこに入るかは、タップした位置のカーソルで決まるので見ない。見るのは、打った語が
+        // 1文字も欠けずに全部あること
+        let value = textView.value as? String ?? ""
+        for word in words {
+            XCTAssertTrue(value.contains(word), "「\(word)」が欠けている（\(value)）")
+        }
+        XCTAssertEqual(value.count, words.joined().count, "余分な文字か、欠けた文字がある（\(value)）")
+    }
+
     /// キーボードを出したまま「もとに戻す」を押すと、入力欄も戻り、続けて打っても戻した内容を打ち消さない。
     ///
     /// 回帰テスト: 打っている最中は外からの変化を入力欄へ合わせていなかったので、入力欄に戻す前の
