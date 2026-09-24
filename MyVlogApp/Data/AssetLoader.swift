@@ -82,16 +82,15 @@ actor AssetLoader {
                 defer { lock.unlock() }
                 guard !hasResumed else { return }
 
+                hasResumed = true
                 if let asset {
-                    hasResumed = true
                     continuation.resume(returning: asset)
                 } else {
-                    let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
-                    if !isDegraded {
-                        hasResumed = true
-                        let err = (info?[PHImageErrorKey] as? Error) ?? AssetLoaderError.assetNotFound(identifier)
-                        continuation.resume(throwing: err)
-                    }
+                    // 中身が無ければ、途中版（degraded）の知らせでもその場で失敗として返す。
+                    // 動画の読み込み（requestAVAsset）の知らせは1回きりで、途中版を待って見送ると
+                    // 次の知らせが来ないまま、読み込みが終わらなくなる
+                    let err = (info?[PHImageErrorKey] as? Error) ?? AssetLoaderError.assetNotFound(identifier)
+                    continuation.resume(throwing: err)
                 }
             }
         }
