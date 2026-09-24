@@ -435,6 +435,6 @@ final class VlogStore {
     func showMessage(_ text: String) {
         toastTask?.cancel()
         toastMessage = text
-        toastTask = ToastTimer.scheduleClear { [weak self] in self?.toastMessage = nil }
+        toastTask = ToastTimer.scheduleClear(after: ToastTimer.duration(for: text)) { [weak self] in self?.toastMessage = nil }
     }
 }

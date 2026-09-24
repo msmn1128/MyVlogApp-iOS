@@ -117,47 +117,36 @@ extension VlogStore {
     /// 以前はloadProjectだけこの検証を通らず、動画を削除・移動した後に古い名前付き保存を
     /// 読み込むと無効な参照を含んだまま復元されてしまっていた。
     private func validClips(from source: [VlogClip]) -> (clips: [VlogClip], excludedCount: Int) {
-        // フォトライブラリの存在確認は、1件ずつfetchすると件数ぶん（最大100本）往復する。
-        // 起動時に同期で走らせるので、まとめて1回で引いてから突き合わせる
-        let existingAssetIds = Self.existingAssetIdentifiers(
+        // 判定は書き出し前の確認と同じ（ClipAvailability）。フォトライブラリはまとめて1回で引く
+        let existingAssetIds = ClipAvailability.existingAssetIdentifiers(
             among: source.compactMap { $0.assetIdentifier }
         )
 
         var loaded: [VlogClip] = []
         var excluded = 0
         for var clip in source {
+            guard ClipAvailability.isAvailable(clip, existingAssets: existingAssetIds) else {
+                excluded += 1
+                continue
+            }
+            // ファイル取り込みは、見つかった場所を持たせ直す（古い保存データは絶対パスしか持っていない）
             if let resolved = clip.resolvedFileURL, FileManager.default.fileExists(atPath: resolved.path) {
                 if clip.relativeFilePath == nil {
                     clip.relativeFilePath = resolved.lastPathComponent
                 }
                 clip.fileURL = resolved
-                loaded.append(clip)
-            } else if let id = clip.assetIdentifier, existingAssetIds.contains(id) {
-                loaded.append(clip)
-            } else {
-                excluded += 1
             }
+            loaded.append(clip)
         }
         return (loaded, excluded)
     }
 
     /// タイムラインの全クリップについて、動画が今も開けるかを確かめ直す（Android: refreshMissingClips）。
     /// アプリが前面に戻ったとき・再生できなかったとき・書き出しが終わったときに呼ぶ。
-    /// 判定は復元と同じ（ファイルがあるか・フォトライブラリにあるか）で、まとめて1回で引くので軽い。
+    /// 判定は復元と同じ（ClipAvailability）で、フォトライブラリはまとめて1回で引くので軽い。
     func refreshMissingClips() {
-        let (readable, _) = validClips(from: clips)
-        let readableIds = Set(readable.map(\.id))
-        let missing = Set(clips.map(\.id).filter { !readableIds.contains($0) })
+        let missing = Set(ClipAvailability.unavailableIndices(in: clips).map { clips[$0].id })
         if missing != missingClipIds { missingClipIds = missing }
-    }
-
-    /// 渡した識別子のうち、いまもフォトライブラリに実在するものだけを返す（1回のfetchで済ませる）
-    private static func existingAssetIdentifiers(among identifiers: [String]) -> Set<String> {
-        guard !identifiers.isEmpty else { return [] }
-        var found: Set<String> = []
-        PHAsset.fetchAssets(withLocalIdentifiers: identifiers, options: nil)
-            .enumerateObjects { asset, _, _ in found.insert(asset.localIdentifier) }
-        return found
     }
 
     // MARK: - 使われなくなった取り込みファイル

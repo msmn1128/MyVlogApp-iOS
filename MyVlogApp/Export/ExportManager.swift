@@ -66,6 +66,21 @@ final class ExportManager {
             showMessage("クリップが多すぎます（上限\(VlogLayout.maxClips)本、現在\(clips.count)本）。クリップを減らしてください")
             return
         }
+        // 開けない動画が混ざっていると、途中でAVFoundationの「動画が見つかりません: <識別子>」のような
+        // どれが原因か分からないエラーで失敗していた。何本目のどの動画かを伝えて、始める前に断る
+        let missing = ClipAvailability.unavailableIndices(in: clips)
+        if !missing.isEmpty {
+            showMessage(Formatters.missingClipsMessage(indices: missing, clips: clips))
+            return
+        }
+        // 空き容量が足りないと、途中で英語のエラーのまま失敗していた（ExportSpace）
+        let required = ExportSpace.requiredFreeBytes(
+            durationMs: ExportSpace.exportDurationMs(clips: clips, includeTitle: includeTitle)
+        )
+        if let available = ExportSpace.availableBytes(), available < required {
+            showMessage(ExportSpace.notEnoughSpaceMessage(required: required, available: available))
+            return
+        }
 
         // 完了通知の許可はここで求める。完了時に求めると、書き出しが終わった瞬間に
         // 許可ダイアログが割り込む（すでに可否が決まっていれば即座に返るので通常は何も出ない）
@@ -104,7 +119,7 @@ final class ExportManager {
     private func showMessage(_ text: String) {
         toastTask?.cancel()
         toastMessage = text
-        toastTask = ToastTimer.scheduleClear { [weak self] in self?.toastMessage = nil }
+        toastTask = ToastTimer.scheduleClear(after: ToastTimer.duration(for: text)) { [weak self] in self?.toastMessage = nil }
     }
 
     /// 完了通知の許可を求める。書き出しを始めるときに呼ぶ（startExport）。
@@ -150,6 +165,9 @@ final class ExportManager {
             update("結合中...")
             let merged = try await worker.concatenate(urls: clipURLs)
             tempFiles.append(merged)
+            // クリップごとの作業ファイルは結合したら要らない。写真への取り込み（結合した動画をもう1つ
+            // 複製する）の前に消して、いちばん多く抱える瞬間を出来上がりの2倍に抑える（ExportSpace）
+            for url in clipURLs { try? FileManager.default.removeItem(at: url) }
             progress = 0.9
 
             update("保存中...")
@@ -164,9 +182,11 @@ final class ExportManager {
             update("")
             showMessage("書き出しを中止しました")
         } catch {
-            update("エラー: \(error.localizedDescription)")
-            notifyCompletion(title: "書き出しに失敗しました", body: error.localizedDescription)
-            showMessage(error.localizedDescription)
+            // 容量不足は、AVFoundationの英語の文言ではなく、どうすればよいかまで日本語で伝える
+            let message = ExportSpace.isNoSpaceError(error) ? ExportSpace.ranOutOfSpaceMessage : error.localizedDescription
+            update("エラー: \(message)")
+            notifyCompletion(title: "書き出しに失敗しました", body: message)
+            showMessage(message)
         }
         for url in tempFiles { try? FileManager.default.removeItem(at: url) }
         // 書き出し用に最高画質で開いたAVAssetは、デコーダとファイルハンドルを抱えたまま

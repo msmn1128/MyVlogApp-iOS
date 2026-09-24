@@ -143,6 +143,15 @@ nonisolated enum Formatters {
             + "（移動・削除されたか、アクセス権限が取り消されています）"
     }
 
+    /// 書き出しの前に、開けない動画が混ざっていたときの通知文（Android: VlogExporter.requireAllReadable）。
+    /// 何本目のどの動画かを伝えないと、どのタイルを外せばよいか分からない
+    /// - Parameter indices: 開けないクリップの添字（0始まり）
+    static func missingClipsMessage(indices: [Int], clips: [VlogClip]) -> String {
+        let which = indices.map { "\($0 + 1)本目（\(clips[$0].timeText)）" }.joined(separator: "、")
+        return "\(which)の動画が見つかりません。移動・削除されたか、アクセス権限が取り消されています。"
+            + "タイムラインから外してから書き出してください"
+    }
+
     /// 前回の続き（自動保存）を復元したときに、開けなかった動画があれば出す通知文
     static func restoreDroppedMessage(dropped: Int) -> String {
         "\(dropped) 件の動画は復元できませんでした（移動・削除されたか、アクセス権限が取り消されています）"
