@@ -252,8 +252,15 @@ final class VlogStore {
 
     // MARK: - Trim
 
+    /// トリミング範囲の変更。
+    ///
+    /// 範囲が変わっていなければ何もしない。つまみを端の限界で止めたままのドラッグ、端での
+    /// 自動スクロール（16msごと）、すでに同じ長さの「2s」などは同じ値で呼んでくる。ここで弾かないと
+    /// 空振りの「もとに戻す」が積まれ、それを編集の合図と取り違えて、開けなかった動画の編集内容を
+    /// 残すための自動保存の保留（AutosavePolicy）まで外れてしまう（Android: TimelineStore.updateTrim）
     func updateTrim(startMs: Int64, endMs: Int64) {
-        guard let i = selectedIndex else { return }
+        guard let i = selectedIndex, let clip = selectedClip else { return }
+        guard clip.startMs != startMs || clip.endMs != endMs else { return }
         updateSelected(tag: "trim:\(i)") { clip in
             clip.startMs = startMs
             clip.endMs   = endMs
@@ -324,9 +331,12 @@ final class VlogStore {
 
     // MARK: - Text / Split
 
+    /// ひとことの書き換え。文字が変わっていなければ何もしない（空振りの「もとに戻す」を積まない。
+    /// 理由はupdateTrimと同じ。日本語の変換中のように、同じ文字のまま通知が来ることがある）
     func updateText(_ text: String, segmentIndex: Int) {
         guard let i = selectedIndex, let clip = selectedClip,
-              clip.texts.indices.contains(segmentIndex) else { return }
+              clip.texts.indices.contains(segmentIndex),
+              clip.texts[segmentIndex].text != text else { return }
         updateSelected(tag: "text:\(i):\(segmentIndex)") { c in
             c.texts[segmentIndex].text = text
         }

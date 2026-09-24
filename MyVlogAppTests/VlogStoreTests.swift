@@ -194,6 +194,20 @@ struct VlogStoreEditingTests {
         return store
     }
 
+    @Test("変わらないトリムとひとことは、もとに戻すに積まない")
+    func unchangedEditsDoNotRecordHistory() {
+        let store = makeStore()
+        store.addClips([TestClip.make(durationMs: 10_000, startMs: 1_000, endMs: 3_000, texts: [TextSegment(startMs: 0, text: "a")])])
+        store.clearHistory()
+
+        // つまみを端の限界で止めたままのドラッグ・同じ長さのプリセットは同じ値で呼んでくる
+        store.updateTrim(startMs: 1_000, endMs: 3_000)
+        store.applyTrimPreset(lengthMs: 2_000)
+        store.updateText("a", segmentIndex: 0)
+
+        #expect(!store.canUndo)
+    }
+
     @Test("区間ごと移動でトリムより手前の区切りが潰れない")
     func moveTrimKeepsSplitSpacing() {
         // TimelineShiftTests と同じ回帰を、実際に使われる経路（store）で確かめる
