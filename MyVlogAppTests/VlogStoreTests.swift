@@ -658,6 +658,24 @@ struct VlogStoreProjectsTests {
         #expect(store.toastMessage == Formatters.projectLoadedMessage(dropped: 1))
     }
 
+    @Test("連続再生は初めて開いたときオン、タイムライン全体のミュートは次回へ引き継がない")
+    func settingDefaults() {
+        let suiteName = "VlogStoreTests.settingDefaults"
+        UserDefaults.standard.removePersistentDomain(forName: suiteName)
+        let defaults = UserDefaults(suiteName: suiteName)!
+
+        let first = VlogStore(defaults: defaults)
+        #expect(first.isContinuousPlay)
+        #expect(!first.timelineMuted)
+
+        first.toggleContinuousPlay()
+        first.toggleTimelineMuted()
+        let second = VlogStore(defaults: defaults)
+        // 連続再生は選んだ状態を覚える。ミュートは忘れて書き出すと無音の動画になるので覚えない
+        #expect(!second.isContinuousPlay)
+        #expect(!second.timelineMuted)
+    }
+
     @Test("読み出しは「もとに戻す」で読み出す前へ戻せる")
     func loadIsUndoable() {
         let store = makeStore()

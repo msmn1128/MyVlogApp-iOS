@@ -49,7 +49,8 @@ final class VlogStore {
     let savedProjectsKey = "vlog_saved_projects_v1"
     // init内（全stored propertyの初期化が済む前）から読むため、インスタンスではなく型に持たせる
     private static let continuousPlayKey = "vlog_continuous_play"
-    private static let timelineMutedKey  = "vlog_timeline_muted"
+    /// 以前はタイムライン全体のミュートを保存していた。いまは引き継がないので、残っていれば消すだけ
+    private static let legacyTimelineMutedKey = "vlog_timeline_muted"
 
     /// 保存先。アプリでは常に`.standard`で、差し替えるのはテストだけ。
     ///
@@ -60,8 +61,13 @@ final class VlogStore {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults    = defaults
-        isContinuousPlay = defaults.bool(forKey: Self.continuousPlayKey)
-        timelineMuted    = defaults.bool(forKey: Self.timelineMutedKey)
+        // 連続再生の既定はオン（Android: ClipStore.restoreAutoAdvance の既定 true）。
+        // bool(forKey:)は未保存でfalseを返すため、初めて開いた人は連続再生オフで始まっていた
+        isContinuousPlay = defaults.object(forKey: Self.continuousPlayKey) as? Bool ?? true
+        // タイムライン全体のミュートは次回起動へ引き継がない（Android: 起動時の引き継ぎはしない）。
+        // 引き継ぐと、前回ミュートにしたことを忘れたまま書き出して、無音の動画ができてしまう
+        timelineMuted    = false
+        defaults.removeObject(forKey: Self.legacyTimelineMutedKey)
         loadSavedProjectsFromDefaults()
         // 前回の続きの復元は同期で済ませる。非同期（Task）にすると、復元が走る前に
         // ユーザーが操作できてしまう窓ができ、その間に追加した動画を
@@ -370,8 +376,8 @@ final class VlogStore {
     // MARK: - Continuous play
 
     // toggleContinuousPlay/toggleTimelineMutedはrecordForUndo/scheduleAutoSaveを
-    // 経由しない。これはクリップのデータではなく「アプリの設定」（UserDefaultsに
-    // 直接保存）だから。autosaveはclips/selectedIndexしか対象にしておらず、undo
+    // 経由しない。これはクリップのデータではなく「アプリの設定」（連続再生はUserDefaultsに
+    // 直接保存、タイムライン全体のミュートはその回かぎり）だから。autosaveはclips/selectedIndexしか対象にしておらず、undo
     // スタックもクリップの編集履歴のためのものなので、意図的にどちらも通さない
     // （toggleMute(at:)はclips[index].isMutedというクリップ自身のデータなので
     // 対照的にrecordForUndo/scheduleAutoSaveの対象になる）。
@@ -382,9 +388,9 @@ final class VlogStore {
 
     // MARK: - Mute
 
+    /// 次回起動へは引き継がない（理由はinitのコメント）
     func toggleTimelineMuted() {
         timelineMuted.toggle()
-        defaults.set(timelineMuted, forKey: Self.timelineMutedKey)
     }
 
     func toggleMute(at index: Int) {
