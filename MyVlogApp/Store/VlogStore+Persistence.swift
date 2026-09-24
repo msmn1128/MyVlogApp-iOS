@@ -1,5 +1,4 @@
 import Foundation
-import Photos
 
 // =====================================================================================
 // VlogStore.swiftからの切り出し。自動保存・名前付き保存(SavedProject)の永続化だけを
@@ -22,7 +21,10 @@ private nonisolated let autoSaveQueue = DispatchQueue(label: "com.msmn1128.myvlo
 /// `UserDefaults`はAppleのドキュメントでスレッドセーフと明記されているが、型としては
 /// Sendableではないため、そのままクロージャへ持ち込むと並行性チェックに引っかかる
 /// （Swift 6モードではエラー）。安全である根拠をこの1箇所に閉じ込めて@unchecked Sendableにする。
-private struct SendableDefaults: @unchecked Sendable {
+///
+/// プロジェクト全体の既定（MainActor）から外しておく。外さないと中身の参照までMainActorに縛られ、
+/// 書き込み用のキュー（別スレッド）から読めない
+private nonisolated struct SendableDefaults: @unchecked Sendable {
     let defaults: UserDefaults
 }
 

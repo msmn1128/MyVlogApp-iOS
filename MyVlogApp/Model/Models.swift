@@ -90,14 +90,20 @@ nonisolated struct VlogClip: Identifiable, Codable, Equatable {
     /// （Android: VlogModels.kt sortKeyMs / parseShotAtText）
     var sortKeyMs: Int64 {
         if shotAtMillis > 0 { return shotAtMillis }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy/MM/dd HH:mm"
-        if let date = formatter.date(from: "\(dateText) \(timeText)") {
+        if let date = Self.legacyShotAtFormatter.date(from: "\(dateText) \(timeText)") {
             return Int64(date.timeIntervalSince1970 * 1000)
         }
         return .max
     }
+
+    /// 撮影時刻を持たない古い保存データの並べ替えに使う。並べ替えの比較のたびに作っていたので1つだけ作る。
+    /// DateFormatterはスレッドをまたいで使ってよい（Sendable）ので、共有にしてある
+    private static let legacyShotAtFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy/MM/dd HH:mm"
+        return formatter
+    }()
 
     private enum CodingKeys: String, CodingKey {
         case id, assetIdentifier, fileURL, relativeFilePath, timeText, dateText

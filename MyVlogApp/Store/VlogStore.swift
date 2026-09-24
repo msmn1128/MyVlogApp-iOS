@@ -1,6 +1,4 @@
 import SwiftUI
-import Combine
-import Photos
 
 // MARK: - VlogStore
 //
@@ -401,8 +399,8 @@ final class VlogStore {
 
     // toggleContinuousPlay/toggleTimelineMutedはrecordForUndo/scheduleAutoSaveを
     // 経由しない。これはクリップのデータではなく「アプリの設定」（連続再生はUserDefaultsに
-    // 直接保存、タイムライン全体のミュートはその回かぎり）だから。autosaveはclips/selectedIndexしか対象にしておらず、undo
-    // スタックもクリップの編集履歴のためのものなので、意図的にどちらも通さない
+    // 直接保存、タイムライン全体のミュートはその回かぎり）だから。autosaveはclips/selectedIndexしか
+    // 対象にしておらず、undoスタックもクリップの編集履歴のためのものなので、意図的にどちらも通さない
     // （toggleMute(at:)はclips[index].isMutedというクリップ自身のデータなので
     // 対照的にrecordForUndo/scheduleAutoSaveの対象になる）。
     func toggleContinuousPlay() {
