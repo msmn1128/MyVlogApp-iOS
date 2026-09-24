@@ -178,16 +178,23 @@ final class ExportManager {
             )
 
             update("結合中...")
-            let merged = try await worker.concatenate(urls: clipURLs)
+            // 結合と写真への保存は、進み具合の数字が取れない。大きな動画では数十秒かかり、その間
+            // 進み具合が動かないと、アプリを離れて書き出しているときにシステムから「止まっている」と
+            // みなされて打ち切られうる（ExportKeepAlive）。終わるまで少しずつ進める
+            let afterClips = progress
+            let merged = try await creepProgress(toward: afterClips + (1 - afterClips) * 0.6) {
+                try await worker.concatenate(urls: clipURLs)
+            }
             tempFiles.append(merged)
             // クリップごとの作業ファイルは結合したら要らない。写真への取り込み（結合した動画をもう1つ
             // 複製する）の前に消して、いちばん多く抱える瞬間を出来上がりの2倍に抑える（ExportSpace）
             for url in clipURLs { try? FileManager.default.removeItem(at: url) }
-            progress = 0.9
 
             update("保存中...")
             let displayName = Formatters.exportFileName(exportedAt: createdAt)
-            try await worker.saveToPhotoLibrary(url: merged, displayName: displayName, createdAt: createdAt)
+            try await creepProgress(toward: 0.99) {
+                try await worker.saveToPhotoLibrary(url: merged, displayName: displayName, createdAt: createdAt)
+            }
             progress = 1.0
             update("完了")
             let savedMessage = "写真に保存しました\n\(displayName)"
@@ -264,6 +271,35 @@ final class ExportManager {
 
     private func update(_ msg: String) {
         message = msg
+    }
+
+    /// 進み具合の数字が取れない工程のあいだ、1秒ごとに`target`へ近づける（届きはしない）。
+    /// 動かないと「止まっている」とみなされうるため（呼び出し側のコメント参照）
+    private func creepProgress<T>(toward target: Double, _ operation: () async throws -> T) async rethrows -> T {
+        let start = progress
+        let ticker = Task { @MainActor [weak self] in
+            var elapsed = 0.0
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                elapsed += 1
+                guard let self, !Task.isCancelled else { return }
+                self.progress = max(self.progress, Self.creptProgress(from: start, toward: target, elapsedSeconds: elapsed))
+            }
+        }
+        defer { ticker.cancel() }
+        return try await operation()
+    }
+
+    /// 始めてから`elapsedSeconds`秒たったときの進み具合。はじめは速く、だんだん遅くなるが、止まりはしない。
+    ///
+    /// 残りの何割かずつ近づける形（指数的）だと、30秒ほどで1回に進む量が報告の細かさを下回り、伝わる
+    /// 数字が動かなくなっていた。経過時間に反比例して遅くなる形なら、30分たっても毎秒動く。
+    /// 単体テストから直接呼ぶためinternal・nonisolated
+    nonisolated static func creptProgress(from start: Double, toward target: Double, elapsedSeconds: Double) -> Double {
+        guard target > start, elapsedSeconds > 0 else { return start }
+        // 20秒で残りの半分まで進む
+        let halfway = 20.0
+        return start + (target - start) * elapsedSeconds / (elapsedSeconds + halfway)
     }
 
     /// 書き出した動画を写真へ保存してよいかを、書き出しを始める前に確かめる。まだ聞いていなければここで聞く。
