@@ -270,6 +270,32 @@ nonisolated enum FrameInspector {
         try await !AVURLAsset(url: url).loadTracks(withMediaType: .audio).isEmpty
     }
 
+    /// `rect`（左上原点）の中で、条件に合う画素の数（RGBは0〜255）
+    static func pixelCount(_ image: CGImage, in rect: CGRect, where matches: (Int, Int, Int) -> Bool) -> Int {
+        let width  = image.width
+        let height = image.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(
+            data: &pixels,
+            width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return 0 }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        let minX = max(0, Int(rect.minX)), maxX = min(width,  Int(rect.maxX))
+        let minY = max(0, Int(rect.minY)), maxY = min(height, Int(rect.maxY))
+        guard minX < maxX, minY < maxY else { return 0 }
+        var count = 0
+        for y in minY..<maxY {
+            for x in minX..<maxX {
+                let i = (y * width + x) * 4
+                if matches(Int(pixels[i]), Int(pixels[i + 1]), Int(pixels[i + 2])) { count += 1 }
+            }
+        }
+        return count
+    }
+
     /// `rect`（左上原点）の中の、RGBそれぞれの平均（0〜255）
     static func meanRGB(_ image: CGImage, in rect: CGRect) -> (r: Double, g: Double, b: Double) {
         let width  = image.width

@@ -31,57 +31,25 @@ extension ExportWorker {
             : frame >= fadeEnd ? 0.0
             : 1.0 - CGFloat(frame - fadeStart + 1) / CGFloat(fadeFrameCount)
 
-        let renderer = UIGraphicsImageRenderer(size: size)
-        let image = renderer.image { _ in
+        // 倍率は1にする（既定は画面の倍率で、1920x1080のために3倍の大きさの画像を描いてから縮めていた）
+        let format = UIGraphicsImageRendererFormat()
+        format.scale  = 1
+        format.opaque = true
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        let image = renderer.image { rendererContext in
             // Black background
             UIColor.black.setFill()
             UIRectFill(CGRect(origin: .zero, size: size))
 
             guard alpha > 0 else { return }
 
-            // Line 1: "Vlog."（Android: TITLE_FONT_PT / TITLE_Y_OFFSET_PT、中央から-70ptずらす）
-            let vlogFont = UIFont(name: VlogFonts.logoTypeName, size: VlogLayout.titleVlogFontSize)
-                ?? UIFont.systemFont(ofSize: VlogLayout.titleVlogFontSize, weight: .regular)
-            let vlogAttrs: [NSAttributedString.Key: Any] = [
-                .font:            vlogFont,
-                .foregroundColor: UIColor.white.withAlphaComponent(alpha)
-            ]
-            let vlogStr = NSAttributedString(string: "Vlog.", attributes: vlogAttrs)
-            let vlogSize = vlogStr.size()
-
-            // Line 2以降: タイトル文言（既定は撮影日、自由入力なら複数行もありうる）。
-            // Android: TITLE_DATE_FONT_PT / TITLE_DATE_Y_OFFSET_PT、+80ptずらす。
-            // 複数行になっても1行目の位置（titleDateYOffset）は動かさず、以降を
-            // titleDateLineSpacingぶんの行送りで下へ積む（Android: LineAnchor.TOP）。
-            let dateFont = UIFont(name: VlogFonts.timeFontName, size: VlogLayout.titleDateFontSize)
-                ?? UIFont.systemFont(ofSize: VlogLayout.titleDateFontSize, weight: .light)
-            let dateAttrs: [NSAttributedString.Key: Any] = [
-                .font:            dateFont,
-                .foregroundColor: UIColor.white.withAlphaComponent(alpha)
-            ]
-            let lineHeight = VlogLayout.titleDateFontSize + VlogLayout.titleDateLineSpacing
-
-            // Android centeredY(offsetPt) = (h-text_h)/2 + offsetPt をそのまま踏襲
-            let vlogY = (size.height - vlogSize.height) / 2 + VlogLayout.titleVlogYOffset
-            vlogStr.draw(in: CGRect(
-                x: (size.width - vlogSize.width) / 2,
-                y: vlogY,
-                width: vlogSize.width,
-                height: vlogSize.height
-            ))
-
-            for (idx, line) in titleLines.enumerated() {
-                let lineStr = NSAttributedString(string: line, attributes: dateAttrs)
-                let lineSize = lineStr.size()
-                let lineY = (size.height - lineSize.height) / 2
-                    + VlogLayout.titleDateYOffset + CGFloat(idx) * lineHeight
-                lineStr.draw(in: CGRect(
-                    x: (size.width - lineSize.width) / 2,
-                    y: lineY,
-                    width: lineSize.width,
-                    height: lineSize.height
-                ))
-            }
+            // 「Vlog.」（中央から-70pt）と文言（+80pt、複数行は下へ積む）。縦位置はベースラインで
+            // 決めるので、自由入力に絵文字が入っても行がずれない（CaptionRenderer）。
+            // フェードは文字ごと（絵文字も一緒に）薄くする
+            let context = rendererContext.cgContext
+            context.setAlpha(alpha)
+            CaptionRenderer.drawTitleLogo(canvas: size, in: context)
+            CaptionRenderer.drawTitleLines(titleLines, canvas: size, in: context)
         }
 
         if let cgImage = image.cgImage {
@@ -111,22 +79,22 @@ extension ExportWorker {
     ) -> CaptionOverlays {
         CaptionOverlays(
             bySpan: spans.map { span in
-                renderOverlay(canvas: canvas) {
-                    drawHitokoto(span.text, canvas: canvas)
+                renderOverlay(canvas: canvas) { context in
+                    CaptionRenderer.drawHitokoto(span.text, canvas: canvas, scale: 1, in: context)
                     drawTimestamp(timeText, canvas: canvas)
                 }
             },
-            timeOnly: renderOverlay(canvas: canvas) { drawTimestamp(timeText, canvas: canvas) },
+            timeOnly: renderOverlay(canvas: canvas) { _ in drawTimestamp(timeText, canvas: canvas) },
             spans: spans
         )
     }
 
     /// 透明背景のオーバーレイ画像を1枚作る
-    private func renderOverlay(canvas: CGSize, draw: () -> Void) -> CGImage? {
+    private func renderOverlay(canvas: CGSize, draw: (CGContext) -> Void) -> CGImage? {
         let format = UIGraphicsImageRendererFormat()
         format.opaque = false
         format.scale  = 1
-        return UIGraphicsImageRenderer(size: canvas, format: format).image { _ in draw() }.cgImage
+        return UIGraphicsImageRenderer(size: canvas, format: format).image { draw($0.cgContext) }.cgImage
     }
 
     /// 読み取ったフレームを書き込み用のバッファへ写し、その上へキャプションを重ねる。
@@ -187,31 +155,6 @@ extension ExportWorker {
             for row in 0..<height {
                 memcpy(dst + row * dstStride, src + row * srcStride, rowBytes)
             }
-        }
-    }
-
-    /// 「ひとこと」：上下左右中央、複数行対応（Android: HITOKOTO_FONT_PT / LINE_SPACING）
-    private func drawHitokoto(_ text: String, canvas: CGSize) {
-        let font = UIFont(name: VlogFonts.logoTypeName, size: VlogLayout.hitokotoFontSize)
-            ?? UIFont.boldSystemFont(ofSize: VlogLayout.hitokotoFontSize)
-        let lineH = VlogLayout.hitokotoFontSize + VlogLayout.hitokotoLineGap
-        let lines = VlogLayout.captionLines(text)
-        // PreviewViewのhitokotoOverlayと同じ計算をVlogLayout.hitokotoBlockTopに共通化している
-        let topY  = VlogLayout.hitokotoBlockTop(
-            lineCount: lines.count, canvasHeight: canvas.height,
-            fontSize: VlogLayout.hitokotoFontSize, lineGap: VlogLayout.hitokotoLineGap
-        )
-
-        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: UIColor.white]
-        for (idx, line) in lines.enumerated() where !line.isEmpty {
-            let str  = NSAttributedString(string: line, attributes: attrs)
-            let size = str.size()
-            let slotY = topY + CGFloat(idx) * lineH
-            str.draw(in: CGRect(
-                x: (canvas.width - size.width) / 2,
-                y: slotY + (lineH - size.height) / 2,
-                width: size.width, height: size.height
-            ))
         }
     }
 

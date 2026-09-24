@@ -136,35 +136,27 @@ private struct PreviewCaptionLayer: View {
         }
     }
 
+    /// ひとこと。書き出しと同じ描画関数（CaptionRenderer）で描くので、位置・大きさ・絵文字の出方が
+    /// 書き出した動画と一致する。以前はSwiftUIのTextで描いていて、絵文字や他のフォントで補った字が
+    /// 入ると行の高さが変わり、行ごと上下へずれていた（書き出し側もずれ方が違った）。
+    /// 折り返さず、キャンバスより長い行は書き出しと同じく左右へ均等にはみ出す（外は親で切る）
     private func hitokotoOverlay(text: String) -> some View {
-        let lines      = VlogLayout.captionLines(text)
-        let fontSize   = VlogLayout.hitokotoFontSize * scale
-        let lineGap    = VlogLayout.hitokotoLineGap * scale
-        let lineHeight = fontSize + lineGap
-        // 上下左右中央: Y は canvas 中心から均等に配置（ExportWorker+Drawing.drawHitokotoと
-        // 同じ計算をVlogLayout.hitokotoBlockTopに共通化している）
-        let startY = VlogLayout.hitokotoBlockTop(
-            lineCount: lines.count, canvasHeight: canvas.height, fontSize: fontSize, lineGap: lineGap
-        )
+        HitokotoCanvas(text: text, scale: scale)
+            .frame(width: canvas.width, height: canvas.height)
+            .allowsHitTesting(false)
+    }
+}
 
-        return ZStack {
-            ForEach(Array(lines.enumerated()), id: \.offset) { idx, line in
-                // 高さlineHeightのスロットに収めて中央寄せ（ExportWorker+Drawing.drawHitokotoの
-                // slotY + lineH/2 と同じ考え方）。以前はfontSize/2を使っており、
-                // 単一行のときだけたまたまキャンバス中央に一致し、書き出し側（lineHeight/2基準）
-                // との食い違い（lineGap/2ぶんのズレ）に気付きにくくなっていた。
-                let y = startY + CGFloat(idx) * lineHeight + lineHeight / 2
-                if !line.isEmpty {
-                    Text(line)
-                        .font(.custom(VlogFonts.logoTypeName, size: fontSize))
-                        .foregroundStyle(.white)
-                        // 折り返さない。書き出し（drawHitokoto）は1行を実寸のまま中央へ描き、
-                        // キャンバスより長ければ左右均等にはみ出す。プレビューだけキャンバス幅で
-                        // 折り返すと、画面では収まって見えるのに書き出した動画では左右が切れる
-                        // （Android: PreviewSection.ktのsoftWrap = false）
-                        .fixedSize()
-                        .position(x: canvas.width / 2, y: y)
-                }
+/// ひとことを描くだけの葉。文字と倍率が変わらなければ描き直さない
+/// （再生位置が変わるたびに親が作り直されても、区間が同じなら描き直しは起きない）
+private struct HitokotoCanvas: View, Equatable {
+    let text: String
+    let scale: CGFloat
+
+    var body: some View {
+        Canvas { context, size in
+            context.withCGContext { cg in
+                CaptionRenderer.drawHitokoto(text, canvas: size, scale: scale, in: cg)
             }
         }
     }

@@ -29,7 +29,9 @@ extension ExportWorker {
         writer.startWriting()
         writer.startSession(atSourceTime: .zero)
 
-        let titleLines = VlogLayout.captionLines(titleText).filter { !$0.isEmpty }
+        // 空白だけの行は詰める（Android: titleLines）。以前は空の行だけを詰めていたので、
+        // スペースだけの行が見えない1行として残り、下の行が1行ぶん下がっていた
+        let titleLines = CaptionRenderer.titleLines(titleText)
         do {
             for frameIdx in 0..<totalFrames {
                 try Task.checkCancellation()

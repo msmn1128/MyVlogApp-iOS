@@ -116,6 +116,20 @@ struct ExportOutputTests {
         )
     }
 
+    @Test("ひとことの絵文字は、書き出した動画にもカラーで出る")
+    func emojiIsBurnedInColor() async throws {
+        // Android版では書き出しから絵文字が消えていた（drawtext）。iOS版はプレビューと同じ描画関数
+        // （CaptionRenderer）で描くので、端末の絵文字フォントでカラーのまま焼き込まれる
+        let source = try await TestVideoFactory.makeSolidColorVideo(seconds: 1)
+        let output = try await ExportRunner().processClip(makeClip(source: source, text: "😀"), silent: true)
+        defer { TestVideoFactory.remove(source, output) }
+
+        let frame = try await FrameInspector.frame(of: output, atSeconds: 0.5)
+        // 😀の黄色（赤・緑が強く青が弱い）。元の動画は暗い灰色なので、黄色い画素は絵文字しかない
+        let yellow = FrameInspector.pixelCount(frame, in: Region.hitokoto) { r, g, b in r > 180 && g > 140 && b < 90 }
+        #expect(yellow > 200, "絵文字がカラーで出ていない（黄色い画素 \(yellow)）")
+    }
+
     @Test("トリムした区間の長さだけが書き出される")
     func onlyTrimmedRangeIsExported() async throws {
         let source = try await TestVideoFactory.makeSolidColorVideo(seconds: 1)
