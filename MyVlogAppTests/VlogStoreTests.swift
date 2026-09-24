@@ -743,10 +743,10 @@ struct VlogStoreProjectsTests {
         try await Task.sleep(nanoseconds: 800_000_000)
         #expect(defaults.data(forKey: "vlog_autosave_v1_clips") == stored)
 
-        // 編集したら、そこからは書く（落とした動画はもう保存に残らない）
+        // 編集したら、そこからは書く（落とした動画はもう保存に残らない）。
+        // バックグラウンドへ回るときの書き込みは、待たずにその場で書き終わっている
         store.toggleMute(at: 0)
         store.flushAutoSave()
-        try await Task.sleep(nanoseconds: 300_000_000)
         let saved = try JSONDecoder().decode([VlogClip].self, from: #require(defaults.data(forKey: "vlog_autosave_v1_clips")))
         #expect(saved.count == 1)
         #expect(saved[0].isMuted)

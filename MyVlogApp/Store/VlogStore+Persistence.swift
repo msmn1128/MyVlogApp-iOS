@@ -46,12 +46,16 @@ extension VlogStore {
     /// 自動保存は編集が止まってから0.5秒待って書くので、編集してすぐホームへ戻ると、
     /// 書く前にアプリが止められ、そのまま終了されると最後の編集が失われる。
     /// 書いてよいかの判断はAutosavePolicy（開けない動画を落とした回の保留を守る）。
+    ///
+    /// ここでは書き終わるまで待つ（ふだんの自動保存は別スレッドへ投げるだけ）。投げるだけだと、
+    /// バックグラウンドへ回った直後にアプリが止められたとき、書く前に止まることがある。
+    /// 同じ直列キューで待つので、先に投げてあった古い内容があとから書かれることも無い。
     func flushAutoSave() {
         guard autoSaveTask != nil else { return }
         autoSaveTask?.cancel()
         autoSaveTask = nil
         guard autosavePolicy.shouldSaveOnExit(canUndo: canUndo) else { return }
-        performAutoSave()
+        performAutoSave(waitUntilWritten: true)
     }
 
     /// JSONの組み立てとUserDefaultsへの書き込みをメインスレッドの外で行う。
@@ -62,16 +66,23 @@ extension VlogStore {
     /// clipsは値型なのでスナップショットを渡すだけで安全に切り離せる。
     ///
     /// 書き込み先は`autoSaveQueue`（直列）。並列に投げると新旧が入れ替わりうる（理由は同キューのコメント）。
-    private func performAutoSave() {
+    ///
+    /// - Parameter waitUntilWritten: 書き終わるまで待つか（バックグラウンドへ回るときだけ。flushAutoSave）
+    private func performAutoSave(waitUntilWritten: Bool = false) {
         let snapshot = clips
         let index    = selectedIndex
         let key      = autoSaveKey
         // selfをクロージャへ持ち込まないよう、保存先も先にローカルへ取り出しておく
         let store    = SendableDefaults(defaults: defaults)
-        autoSaveQueue.async {
+        let write: @Sendable () -> Void = {
             guard let data = try? JSONEncoder().encode(snapshot) else { return }
             store.defaults.set(data,  forKey: key + "_clips")
             store.defaults.set(index, forKey: key + "_index")
+        }
+        if waitUntilWritten {
+            autoSaveQueue.sync(execute: write)
+        } else {
+            autoSaveQueue.async(execute: write)
         }
     }
 
