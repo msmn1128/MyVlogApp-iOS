@@ -33,9 +33,10 @@ final class DynamicTypeUITests: XCTestCase {
         let exportButton = app.descendants(matching: .any)["書き出し"].firstMatch
         XCTAssertTrue(exportButton.exists && exportButton.isHittable, "「書き出し」が押せない")
 
-        // 操作バーの先頭のボタンも、枠ごと伸びて押せる状態を保っているか
-        let trash = app.buttons["選択中のクリップを削除"]
-        XCTAssertTrue(trash.exists && trash.isHittable, "操作バーのボタンが押せない")
+        // 操作バーは右端（よく使う分割）が見えた状態から始まる。そのボタンも、枠ごと伸びて
+        // 押せる状態を保っているか
+        let split = app.buttons["ここでひとことを分割（動画は切りません）"]
+        XCTAssertTrue(split.exists && split.isHittable, "操作バーのボタンが押せない")
 
         attachScreenshot(app, name: "largest_text_size")
     }

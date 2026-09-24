@@ -55,18 +55,15 @@ struct OperationBar: View {
                 ToggleIconButton(
                     systemImage: store.timelineMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
                     checked: store.timelineMuted,
-                    contentDescription: store.timelineMuted
-                        ? "タイムラインのミュート：オン（プレビューと書き出しの音を消します）"
-                        : "タイムラインのミュート：オフ",
+                    // オン/オフはVoiceOverがスイッチの状態として読むので、ここには書かない
+                    contentDescription: "タイムラインのミュート（プレビューと書き出しの音を消します）",
                     enabled: hasClips
                 ) { store.toggleTimelineMuted() }
 
                 ToggleIconButton(
                     systemImage: "play.fill",
                     checked: store.isContinuousPlay,
-                    contentDescription: store.isContinuousPlay
-                        ? "連続再生：オン（終わったら次のクリップへ進みます）"
-                        : "連続再生：オフ（クリップの終わりで止まります）",
+                    contentDescription: "連続再生（オンなら終わったら次のクリップへ、オフならクリップの終わりで止まります）",
                     enabled: hasClips
                 ) { store.toggleContinuousPlay() }
 
@@ -86,12 +83,15 @@ struct OperationBar: View {
 
                 divider
 
-                TrimPresetButton(label: "2s", enabled: trimPresetEnabled) {
+                // 選択範囲の始まりを起点にする（先頭からではない）。読み上げのラベルも動作に合わせる
+                TrimPresetButton(label: "2s", contentDescription: "選択範囲の始まりから2秒にする",
+                                 enabled: trimPresetEnabled) {
                     store.applyTrimPreset(lengthMs: 2_000)
                     // 止めて選び直した範囲の頭を出す（Android: updateTrim → seekAndPause）
                     playerManager.showSelectedClipStart()
                 }
-                TrimPresetButton(label: "4s", enabled: trimPresetEnabled) {
+                TrimPresetButton(label: "4s", contentDescription: "選択範囲の始まりから4秒にする",
+                                 enabled: trimPresetEnabled) {
                     store.applyTrimPreset(lengthMs: 4_000)
                     playerManager.showSelectedClipStart()
                 }

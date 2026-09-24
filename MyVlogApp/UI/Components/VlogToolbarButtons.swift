@@ -129,9 +129,11 @@ struct ToggleIconButton: View {
         .buttonStyle(.plain)
         .disabled(!enabled)
         .accessibilityLabel(contentDescription)
-        // オン/オフの状態はラベルの文言にも入っているが、トグルであることが
-        // 読み上げの種別からも分かるようにする
-        .accessibilityAddTraits(checked ? .isSelected : [])
+        // スイッチとして状態を読ませる（Android: TimelineToggleButton の Role.Switch）。
+        // 以前はオン/オフをラベルの文言に入れていたので、切り替えるたびに別の項目として読み直され、
+        // スイッチであることも伝わらなかった
+        .accessibilityAddTraits(.isToggle)
+        .accessibilityValue(checked ? "オン" : "オフ")
     }
 
     private var iconColor: Color {
@@ -142,6 +144,8 @@ struct ToggleIconButton: View {
 /// Android TrimPresetButton相当：文字ラベル入りの角丸楕円（枠線のみ）
 struct TrimPresetButton: View {
     let label: String
+    /// 読み上げの説明。「2s」だけでは何が起きるのか分からない
+    var contentDescription: String? = nil
     var enabled: Bool = true
     let action: () -> Void
 
@@ -167,6 +171,7 @@ struct TrimPresetButton: View {
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
+        .accessibilityLabel(contentDescription ?? label)
         .padding(.horizontal, 3)
     }
 }

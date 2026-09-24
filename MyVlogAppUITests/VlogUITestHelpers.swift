@@ -93,21 +93,18 @@ extension XCTestCase {
         return condition()
     }
 
-    /// 連続再生トグル。ラベルに現在の状態が入っている（OperationBar.swift）
+    /// 連続再生トグル。状態は読み上げの値（オン/オフ）に入っている（OperationBar.swift）
     @MainActor
     func setContinuousPlay(_ enabled: Bool, in app: XCUIApplication) {
-        let onLabel  = "連続再生：オン（終わったら次のクリップへ進みます）"
-        let offLabel = "連続再生：オフ（クリップの終わりで止まります）"
-        let target   = enabled ? onLabel : offLabel
-        let current  = enabled ? offLabel : onLabel
-
-        if app.buttons[target].exists { return }
-        let toggle = app.buttons[current]
+        let label  = "連続再生（オンなら終わったら次のクリップへ、オフならクリップの終わりで止まります）"
+        let target = enabled ? "オン" : "オフ"
+        let toggle = app.descendants(matching: .any)[label].firstMatch
         XCTAssertTrue(toggle.waitForExistence(timeout: 5), "連続再生トグルが見つからない")
+        if toggle.value as? String == target { return }
         toggle.tap()
         XCTAssertTrue(
-            app.buttons[target].waitForExistence(timeout: 5),
-            "連続再生を\(enabled ? "オン" : "オフ")にできなかった"
+            waitUntil(timeout: 5) { toggle.value as? String == target },
+            "連続再生を\(target)にできなかった"
         )
     }
 

@@ -67,7 +67,7 @@ final class PlaybackUITests: XCTestCase {
         let app = launchApp(clipCount: 1, clipSeconds: 4)
         setContinuousPlay(false, in: app)
 
-        let preset = app.buttons["2s"]
+        let preset = app.buttons["選択範囲の始まりから2秒にする"]
         XCTAssertTrue(preset.waitForExistence(timeout: 10), "トリムプリセットのボタンが見つからない")
         preset.tap()
 

@@ -20,12 +20,24 @@ final class VoiceOverUITests: XCTestCase {
     func testWaveformExposesAdjustableControls() throws {
         let app = launchApp(clipCount: 1, clipSeconds: 4)
 
-        for label in ["トリム開始", "トリム終了", "再生位置"] {
+        for label in ["トリム開始", "トリム終了", "範囲ごと移動", "再生位置"] {
             XCTAssertTrue(
                 app.descendants(matching: .any)[label].firstMatch.waitForExistence(timeout: 10),
                 "波形の「\(label)」が支援技術から見えない"
             )
         }
+    }
+
+    /// ミュートと連続再生は、状態をラベルではなくスイッチの値（オン/オフ）として伝える
+    /// （Android: TimelineToggleButton。ラベルに状態を入れると、切り替えるたびに別の項目として読み直される）
+    @MainActor
+    func testTogglesExposeTheirStateAsAValue() throws {
+        let app = launchApp(clipCount: 1)
+        let mute = app.descendants(matching: .any)["タイムラインのミュート（プレビューと書き出しの音を消します）"].firstMatch
+        XCTAssertTrue(mute.waitForExistence(timeout: 10), "ミュートのスイッチが見つからない")
+        XCTAssertEqual(mute.value as? String, "オフ")
+        mute.tap()
+        XCTAssertTrue(waitUntil(timeout: 3) { mute.value as? String == "オン" }, "切り替えても値がオンにならない")
     }
 
     /// 波形の項目が出している値が、実際のトリムに追従していること。
@@ -44,7 +56,7 @@ final class VoiceOverUITests: XCTestCase {
         XCTAssertTrue(trimEnd.waitForExistence(timeout: 10), "「トリム終了」が見つからない")
         let before = trimEnd.value as? String
 
-        app.buttons["2s"].tap()   // トリムを先頭2秒へ
+        app.buttons["選択範囲の始まりから2秒にする"].tap()   // トリムを先頭2秒へ
 
         XCTAssertTrue(
             waitUntil(timeout: 5) { (trimEnd.value as? String) != before },
@@ -63,6 +75,8 @@ final class VoiceOverUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["編集内容の保存"].waitForExistence(timeout: 5))
 
         app.buttons["この内容を保存"].tap()
+        // 保存するとダイアログは閉じる（続けて押して同じ内容が2件にならないように）ので、開き直す
+        app.buttons["編集内容の保存と読み出し"].tap()
 
         // 保存した行が、名前と内容を1つの項目として読める形で並んでいる
         let row = app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "1本")).firstMatch

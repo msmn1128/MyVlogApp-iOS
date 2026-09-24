@@ -204,6 +204,30 @@ struct WaveformView: View {
                         adjustTrimEnd(by: step(for: clip, direction: direction))
                     }
 
+                // 範囲ごと移動と区切りの移動も、指では長押し・ドラッグでしかできなかった
+                // （Android: trimmerActions の「範囲ごと」「区切りN」）
+                Color.clear
+                    .accessibilityElement()
+                    .accessibilityLabel("範囲ごと移動")
+                    .accessibilityValue(
+                        "\(Formatters.durationLabel(ms: clip.startMs))〜\(Formatters.durationLabel(ms: clip.endMs))"
+                    )
+                    .accessibilityHint("上下スワイプで、長さはそのままに使う範囲を前後へ動かします")
+                    .accessibilityAdjustableAction { direction in
+                        moveTrimRange(by: step(for: clip, direction: direction))
+                    }
+
+                ForEach(Array(clip.texts.indices.dropFirst()), id: \.self) { index in
+                    Color.clear
+                        .accessibilityElement()
+                        .accessibilityLabel("ひとことの区切り\(index)")
+                        .accessibilityValue(Formatters.durationLabel(ms: clip.texts[index].startMs))
+                        .accessibilityHint("上下スワイプで、区切りの位置を前後に動かします")
+                        .accessibilityAdjustableAction { direction in
+                            moveSplit(index: index, by: step(for: clip, direction: direction))
+                        }
+                }
+
                 Color.clear
                     .accessibilityElement()
                     .accessibilityLabel("再生位置")
@@ -240,6 +264,22 @@ struct WaveformView: View {
         store.updateTrim(startMs: clip.startMs, endMs: newEnd)
         playerManager.pause()
         playerManager.seek(to: newEnd)
+    }
+
+    private func moveTrimRange(by deltaMs: Int64) {
+        guard let clip = store.selectedClip,
+              let moved = store.moveTrim(targetStartMs: clip.startMs + deltaMs),
+              moved.startMs != clip.startMs else { return }
+        playerManager.pause()
+        playerManager.seek(to: moved.startMs)
+    }
+
+    private func moveSplit(index: Int, by deltaMs: Int64) {
+        guard let clip = store.selectedClip, clip.texts.indices.contains(index),
+              let moved = store.moveSplit(index: index, newAtMs: clip.texts[index].startMs + deltaMs)
+        else { return }
+        playerManager.pause()
+        playerManager.seek(to: moved)
     }
 
     private func adjustPlayhead(by deltaMs: Int64, clip: VlogClip) {
