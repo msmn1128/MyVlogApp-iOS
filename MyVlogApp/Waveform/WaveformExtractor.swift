@@ -18,8 +18,13 @@ nonisolated struct Waveform: Equatable, Sendable {
 actor WaveformExtractor {
     static let shared = WaveformExtractor()
 
-    /// 値がnilは「取得できなかった」（Android: extractWaveformがnullを返す場合と同じ）
-    private var cache: [String: Waveform?] = [:]
+    /// 取得できた波形（音声なしのWaveform.silentを含む）。
+    ///
+    /// 取得できなかった結果は覚えない。覚えていた頃は、一時的に読めなかっただけの動画
+    /// （iCloud上でまだ落とせていない動画など）でも、アプリを終わらせるまで
+    /// 「波形を取得できませんでした」のままだった。次にそのクリップを選んだときに取り直す
+    /// （Android: requestWaveform。取り直している間は失敗の表示のまま、届いたら差し替わる）
+    private var cache: [String: Waveform] = [:]
 
     /// いま走っているデコードと、その結果を待っている人の数。
     ///
@@ -114,7 +119,7 @@ actor WaveformExtractor {
     private func settle(cacheKey: String, id: Int, result: Waveform?) -> Waveform? {
         guard pending[cacheKey]?.id == id else { return result }
         pending.removeValue(forKey: cacheKey)
-        cache[cacheKey] = result
+        if let result { cache[cacheKey] = result }
         return result
     }
 
@@ -153,9 +158,15 @@ actor WaveformExtractor {
     /// 取りやめられた場合はnil（途中までの値は返さない）。
     private nonisolated static func compute(asset: AVAsset, durationMs: Int64) async -> Waveform? {
         guard durationMs > 0 else { return nil }
-        guard let track = try? await asset.loadTracks(withMediaType: .audio).first else {
-            return .silent
+        // 読み込めなかった（壊れている・アクセスできない）のと、音声トラックが無いのとを分ける。
+        // まとめてtry?で読んでいた頃は、読めない動画まで「音声なし」と表示され、そのまま覚えられていた
+        let audioTracks: [AVAssetTrack]
+        do {
+            audioTracks = try await asset.loadTracks(withMediaType: .audio)
+        } catch {
+            return nil
         }
+        guard let track = audioTracks.first else { return .silent }
 
         let settings: [String: Any] = [
             AVFormatIDKey:               kAudioFormatLinearPCM,

@@ -53,6 +53,20 @@ struct WaveformExtractorTests {
 @Suite("波形のキャッシュと解放")
 struct WaveformExtractorCacheTests {
 
+    @Test("取得できなかった結果は覚えず、次に選んだときに取り直せる")
+    func failuresAreNotCached() async throws {
+        // 動画ではないファイル。読めないので nil（波形を取得できませんでした）になる
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("broken-\(UUID().uuidString).mov")
+        try Data("not a movie".utf8).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let extractor = WaveformExtractor()
+
+        let result = await extractor.extract(asset: AVURLAsset(url: url), cacheKey: "broken", durationMs: 1_000)
+
+        #expect(result == nil)
+        #expect(await extractor.debugCounts.cached == 0)
+    }
+
     /// 音声トラックの無い動画でも結果（Waveform.silent）はキャッシュされるので、
     /// キャッシュの出入りを確かめるにはこれで足りる
     private func makeAsset() async throws -> (asset: AVURLAsset, url: URL) {
