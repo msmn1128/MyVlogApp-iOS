@@ -583,6 +583,43 @@ struct VlogStoreProjectsTests {
         #expect(store.toastMessage == Formatters.restoreDroppedMessage(dropped: 2))
     }
 
+    @Test("開けない動画を落として復元した回は、編集するまで前回の続きを書き換えない")
+    func autosaveIsHeldAfterDroppingUnreadableClips() async throws {
+        let suiteName = "VlogStoreTests.autosaveIsHeldAfterDroppingUnreadableClips"
+        UserDefaults.standard.removePersistentDomain(forName: suiteName)
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("restore-\(UUID().uuidString).mov")
+        try Data([0x00]).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        var missing = TestClip.make(shotAtMillis: 50)
+        missing.fileURL = URL(fileURLWithPath: "/nonexistent/\(UUID().uuidString).mov")
+        let array: [Any] = [
+            try restorableClipJSON(file),
+            try JSONSerialization.jsonObject(with: JSONEncoder().encode(missing))
+        ]
+        let stored = try JSONSerialization.data(withJSONObject: array)
+        defaults.set(stored, forKey: "vlog_autosave_v1_clips")
+
+        let store = VlogStore(defaults: defaults)
+        #expect(store.clips.count == 1)
+
+        // 編集ではない変化（撮影時刻の取り直しなどと同じく履歴に積まれない）では書かない。
+        // バックグラウンドへ回ったときの書き込みも同じ
+        store.scheduleAutoSave()
+        store.flushAutoSave()
+        try await Task.sleep(nanoseconds: 800_000_000)
+        #expect(defaults.data(forKey: "vlog_autosave_v1_clips") == stored)
+
+        // 編集したら、そこからは書く（落とした動画はもう保存に残らない）
+        store.toggleMute(at: 0)
+        store.flushAutoSave()
+        try await Task.sleep(nanoseconds: 300_000_000)
+        let saved = try JSONDecoder().decode([VlogClip].self, from: #require(defaults.data(forKey: "vlog_autosave_v1_clips")))
+        #expect(saved.count == 1)
+        #expect(saved[0].isMuted)
+    }
+
     @Test("一時保存の一覧に壊れた1件があっても、ほかの保存は一覧に残る")
     func projectListSkipsBrokenEntry() throws {
         let suiteName = "VlogStoreTests.projectListSkipsBrokenEntry"

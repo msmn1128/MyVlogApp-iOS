@@ -30,12 +30,28 @@ extension VlogStore {
     // MARK: - Auto-save
 
     func scheduleAutoSave() {
+        // 開けない動画を落として復元した回は、編集されるまで書き換えない（理由はAutosavePolicy）
+        guard autosavePolicy.shouldSave(canUndo: canUndo) else { return }
         autoSaveTask?.cancel()
         autoSaveTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 500_000_000)
             guard !Task.isCancelled, let self else { return }
+            self.autoSaveTask = nil
             self.performAutoSave()
         }
+    }
+
+    /// アプリがバックグラウンドへ回るときに、待っている自動保存をその場で書く（Android: onCleared）。
+    ///
+    /// 自動保存は編集が止まってから0.5秒待って書くので、編集してすぐホームへ戻ると、
+    /// 書く前にアプリが止められ、そのまま終了されると最後の編集が失われる。
+    /// 書いてよいかの判断はAutosavePolicy（開けない動画を落とした回の保留を守る）。
+    func flushAutoSave() {
+        guard autoSaveTask != nil else { return }
+        autoSaveTask?.cancel()
+        autoSaveTask = nil
+        guard autosavePolicy.shouldSaveOnExit(canUndo: canUndo) else { return }
+        performAutoSave()
     }
 
     /// JSONの組み立てとUserDefaultsへの書き込みをメインスレッドの外で行う。
@@ -70,11 +86,14 @@ extension VlogStore {
     /// 中身はUserDefaultsの読み出しとファイルの存在確認だけなので、同期でも起動は止まらない
     /// （PHAssetの確認は件数ぶん往復せず1回にまとめてある。`validClips`参照）。
     /// 唯一重い「撮影時刻の取り直し」は非同期のまま、init側から別に呼んでいる。
-    func restoreAutoSave() {
+    ///
+    /// - Returns: 開けない・壊れていて落とした動画の本数（自動保存を保留するかの判断に使う。AutosavePolicy）
+    @discardableResult
+    func restoreAutoSave() -> Int {
         // 1件ずつ読む。配列ごと読んでいた頃は、1件壊れているだけで前回の続きが丸ごと復元されず、
         // 次の自動保存で空の一覧が書き戻されて消えていた（LossyList）
         guard let data   = defaults.data(forKey: autoSaveKey + "_clips"),
-              let saved  = try? JSONDecoder().decode(LossyList<VlogClip>.self, from: data) else { return }
+              let saved  = try? JSONDecoder().decode(LossyList<VlogClip>.self, from: data) else { return 0 }
         let savedIndex   = defaults.object(forKey: autoSaveKey + "_index") as? Int
 
         let (loaded, unreadable) = validClips(from: saved.elements)
@@ -90,6 +109,7 @@ extension VlogStore {
         if excluded > 0 {
             showMessage(Formatters.restoreDroppedMessage(dropped: excluded))
         }
+        return excluded
     }
 
     /// 各クリップの参照先（ファイル存在／PHAsset存在）を検証し、無効なものを除外する。

@@ -48,6 +48,11 @@ struct MyVlogAppApp: App {
             if phase == .background || phase == .inactive {
                 playerManager.pause()
             }
+            // 待っている自動保存をその場で書く。バックグラウンドのまま終了されると、
+            // 編集してから0.5秒以内の内容が失われるため（VlogStore.flushAutoSave）
+            if phase == .background {
+                store.flushAutoSave()
+            }
         }
     }
 }

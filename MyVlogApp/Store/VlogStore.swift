@@ -43,6 +43,8 @@ final class VlogStore {
 
     // MARK: Persistence（実体の操作はVlogStore+Persistence.swift）
     @ObservationIgnored var autoSaveTask: Task<Void, Never>?
+    /// 前回の続きをいつ書き換えてよいか（AutosavePolicy.swift）
+    @ObservationIgnored var autosavePolicy = AutosavePolicy()
     let autoSaveKey      = "vlog_autosave_v1"
     let savedProjectsKey = "vlog_saved_projects_v1"
     // init内（全stored propertyの初期化が済む前）から読むため、インスタンスではなく型に持たせる
@@ -64,7 +66,8 @@ final class VlogStore {
         // 前回の続きの復元は同期で済ませる。非同期（Task）にすると、復元が走る前に
         // ユーザーが操作できてしまう窓ができ、その間に追加した動画を
         // あとから来た復元が丸ごと上書きしてしまう（詳しくはrestoreAutoSaveのコメント）
-        restoreAutoSave()
+        let dropped = restoreAutoSave()
+        autosavePolicy.onRestored(droppedCount: dropped)
         // 撮影時刻の取り直しだけは動画を開くので非同期。こちらは並び順も編集内容も
         // 変えず、いま並んでいるクリップに後から値を足すだけなので競合しない
         Task { await refreshUnreliableShotTimes() }
