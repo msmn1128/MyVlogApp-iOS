@@ -265,6 +265,27 @@ struct VlogStoreEditingTests {
         #expect(store.selectedClip?.isMuted == true)
     }
 
+    @Test("取り直した撮影時刻は、もとに戻しても取り直す前へ戻らない")
+    func refreshedShotTimeSurvivesUndo() {
+        let store = makeStore()
+        var clip = TestClip.make(timeText: "00:00")
+        clip.shotAtReliable = false
+        store.addClips([clip])
+        let id = store.clips[0].id
+        store.updateText("旅行", segmentIndex: 0)
+
+        store.applyRefreshedShotTimes([id: VideoMeta(
+            timeText: "12:34", dateText: "2026/09/01", shotAtMillis: 1, shotAtReliable: true,
+            durationMs: 10_000, width: 1920, height: 1080
+        )])
+        store.undo()
+
+        #expect(store.selectedClip?.texts[0].text == "")
+        #expect(store.selectedClip?.timeText == "12:34")
+        #expect(store.selectedClip?.shotAtReliable == true)
+        #expect(store.selectedClip?.shotAtRefreshed == true)
+    }
+
     @Test("区間ごと移動でトリムより手前の区切りが潰れない")
     func moveTrimKeepsSplitSpacing() {
         // TimelineShiftTests と同じ回帰を、実際に使われる経路（store）で確かめる

@@ -219,19 +219,36 @@ extension VlogStore {
             }
         }
         guard !refreshed.isEmpty else { return }
+        applyRefreshedShotTimes(refreshed)
+    }
 
-        clips = clips.map { clip in
-            guard let meta = refreshed[clip.id] else { return clip }
-            var updated = clip
-            updated.shotAtRefreshed = true
-            // 確かな値が取れなければ、値はそのままに「試した」印だけ付ける
-            guard meta.shotAtReliable else { return updated }
-            updated.timeText       = meta.timeText
-            updated.dateText       = meta.dateText
-            updated.shotAtMillis   = meta.shotAtMillis
-            updated.shotAtReliable = true
-            return updated
+    /// 撮影時刻を取り直した結果を反映する。並び順は変えず、履歴にも積まない（編集ではない）。
+    ///
+    /// 履歴に積んである過去の状態にも同じ結果を当てる。撮影時刻は動画ファイルから決まる値で、
+    /// 編集の一部ではないため。当てないと、取り直し（起動直後に裏で1本ずつ読む）の最中に
+    /// 編集してから「もとに戻す」を押したとき、時刻が取り直し前の値へ戻ってしまう
+    /// （印も外れるので、次の起動でまた読み直すことにもなる。Android: TimelineStore.applyRefreshedShotTimes）。
+    /// 履歴のスナップショットにも同じクリップ（同じid）が入っているので、idで突き合わせれば当てられる。
+    ///
+    /// - Parameter refreshed: クリップidごとの取り直し結果。対象でなかったクリップ（この間に
+    ///   追加されたものなど）は触らない
+    func applyRefreshedShotTimes(_ refreshed: [UUID: VideoMeta]) {
+        func apply(_ list: [VlogClip]) -> [VlogClip] {
+            list.map { clip in
+                guard let meta = refreshed[clip.id] else { return clip }
+                var updated = clip
+                updated.shotAtRefreshed = true
+                // 確かな値が取れなければ、値はそのままに「試した」印だけ付ける
+                guard meta.shotAtReliable else { return updated }
+                updated.timeText       = meta.timeText
+                updated.dateText       = meta.dateText
+                updated.shotAtMillis   = meta.shotAtMillis
+                updated.shotAtReliable = true
+                return updated
+            }
         }
+        clips = apply(clips)
+        updateHistory(apply)
         scheduleAutoSave()
     }
 

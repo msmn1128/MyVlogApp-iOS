@@ -67,6 +67,15 @@ extension VlogStore {
         apply(redoStack.removeLast().snapshot)
     }
 
+    /// 積んである状態（もとに戻す側・やり直す側の両方）をすべて書き換える（Android: EditHistory.updateAll）。
+    ///
+    /// 編集ではない更新（動画から取り直した撮影時刻など）を、過去の状態にも当てるために使う。
+    /// 当てないと、戻した先で更新前の値が復活する。まとめ判定と積んだ件数は変わらない。
+    func updateHistory(_ transform: ([VlogClip]) -> [VlogClip]) {
+        for i in undoStack.indices { undoStack[i].snapshot.clips = transform(undoStack[i].snapshot.clips) }
+        for i in redoStack.indices { redoStack[i].snapshot.clips = transform(redoStack[i].snapshot.clips) }
+    }
+
     /// 履歴を空にする。復元直後など「ここを起点にしたい」場面で呼ぶ（Android: clear）
     func clearHistory() {
         undoStack.removeAll()
