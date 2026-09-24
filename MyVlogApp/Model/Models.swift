@@ -200,6 +200,17 @@ nonisolated struct VlogClip: Identifiable, Codable, Equatable {
     static let minTrimMs: Int64 = 300
     static let splitMinDistanceMs: Int64 = TextSegment.minSegmentMs
 
+    /// 「同じ動画か」を見分ける鍵（追加済みの判定に使う。planAddition / VlogStore.addClips）。
+    /// フォトライブラリ由来は識別子、ファイル取り込みは中身の指紋。どちらも無い古い保存データはnil
+    /// （重複判定の対象外）。種類ごとに頭を付けて、識別子と指紋が偶然一致しても混ざらないようにする
+    var identityKey: String? {
+        if let assetIdentifier { return Self.assetIdentityKey(assetIdentifier) }
+        if let contentKey { return Self.contentIdentityKey(contentKey) }
+        return nil
+    }
+    static func assetIdentityKey(_ identifier: String) -> String { "asset:" + identifier }
+    static func contentIdentityKey(_ key: String) -> String { "content:" + key }
+
     /// 波形/サムネイル/AVAssetのキャッシュを引くときのキー。
     ///
     /// clip.idではなく「素材そのもの」を指す値にしてあるのは、同じ動画を2回追加したときに

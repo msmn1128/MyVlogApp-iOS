@@ -29,7 +29,10 @@ private typealias ImportedClips = [(index: Int, clip: VlogClip)]
 
 extension ContentView {
     func handlePhotosPick(_ items: [PhotosPickerItem]) async {
-        await importClips(items) { item, fallbackDate in
+        // 識別子があれば、読み込む前に追加済みかを見分けられる（無ければ読み込んでから判定する）
+        await importClips(items, keyOf: { item in
+            item.itemIdentifier.map(VlogClip.assetIdentityKey)
+        }) { item, fallbackDate in
             if let id = item.itemIdentifier,
                let clip = await self.makeClipFromPH(identifier: id, fallbackDate: fallbackDate) {
                 return clip
@@ -62,7 +65,15 @@ extension ContentView {
 
     func handleFilePick(_ result: Result<[URL], Error>) async {
         guard case .success(let urls) = result, !urls.isEmpty else { return }
-        await importClips(urls) { url, fallbackDate in
+        // 中身の指紋は先頭と末尾の64KBだけから作るので、コピーする前に元のファイルから求められる。
+        // 追加済みの動画を丸ごとコピーしてから捨てる無駄を省く（コピー後の実体と同じ中身なので同じ指紋になる）
+        await importClips(urls, keyOf: { url in
+            await Task.detached(priority: .userInitiated) {
+                let accessing = url.startAccessingSecurityScopedResource()
+                defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+                return FileContentKey.make(for: url).map(VlogClip.contentIdentityKey)
+            }.value
+        }) { url, fallbackDate in
             _ = url.startAccessingSecurityScopedResource()
             defer { url.stopAccessingSecurityScopedResource() }
             return await self.makeClipFromURL(url, isTemporaryFile: false, fallbackDate: fallbackDate)
@@ -78,13 +89,41 @@ extension ContentView {
     /// 延長時間（beginBackgroundTask）で処理を継続させ、時間切れになったら明示的に
     /// キャンセルする。以前はこれが無く、バックグラウンド遷移後30秒程度でTaskが
     /// 強制サスペンドされ、復帰してもオーバーレイが消えないまま固まることがあった。
+    ///
+    /// 読み込む前に、追加済みの動画と上限を超える分を外す（planAddition。Android: addClipsNow）。
+    /// 以前は選んだ全部をコピー・読み取りしてから弾いていたため、追加済みの動画や、上限に入らない
+    /// 動画のぶんまで待たされていた。
+    ///
+    /// - Parameter keyOf: 読み込む前に分かる「同じ動画か」の鍵（VlogClip.identityKeyと同じ形）。分からなければnil
     private func importClips<Source>(
-        _ sources: [Source], makeClip: @escaping (Source, Date) async -> VlogClip?
+        _ sources: [Source],
+        keyOf: @escaping (Source) async -> String?,
+        makeClip: @escaping (Source, Date) async -> VlogClip?
     ) async {
         guard !sources.isEmpty else { return }
         store.isImporting = true
         importProgress = 0.0
-        let total = sources.count
+        importMessage = "動画を読み込み中..."
+
+        var keys: [String?] = []
+        for source in sources { keys.append(await keyOf(source)) }
+        let plan = planAddition(
+            requested: Array(sources.indices),
+            existing: Set(store.clips.compactMap(\.identityKey)),
+            currentCount: store.clips.count
+        ) { keys[$0] }
+        let toLoad = plan.toLoad.map { sources[$0] }
+        guard !toLoad.isEmpty else {
+            store.isImporting = false
+            if let message = Formatters.addSkipMessage(
+                alreadyAdded: plan.alreadyAdded, unreadable: 0, overLimit: plan.overLimit
+            ) {
+                store.showMessage(message)
+            }
+            return
+        }
+
+        let total = toLoad.count
         importMessage = "動画を読み込み中 (0/\(total))..."
 
         // importTaskは「先にvarで宣言してクロージャに直接キャプチャさせる」形にしてある。
@@ -105,7 +144,7 @@ extension ContentView {
         let fallbackBase = Date()
 
         let task = Task<ImportedClips, Never> {
-            await loadInParallel(sources, fallbackBase: fallbackBase) { finished in
+            await loadInParallel(toLoad, fallbackBase: fallbackBase) { finished in
                 importProgress = Double(finished) / Double(total)
                 importMessage  = "動画を読み込み中 (\(finished)/\(total))..."
             } makeClip: { source, fallbackDate in
@@ -121,7 +160,7 @@ extension ContentView {
         loadedClips.sort { $0.index < $1.index }
         let newClips = loadedClips.map { $0.clip }
         // 件数は引き算で辻褄を合わせず、理由ごとに数える（Android: addSkipMessage）
-        let unreadable = sources.count - newClips.count
+        let unreadable = toLoad.count - newClips.count
         let result = newClips.isEmpty ? VlogStore.AddResult() : store.addClips(newClips)
         // 重複・上限で入らなかったクリップは、ここまでにDocumentsへコピー済みなので実体を消す。
         // 残すと、タイムラインにも一時保存にも現れない動画がストレージを占め続ける
@@ -131,7 +170,10 @@ extension ContentView {
         if wasCancelled {
             store.showMessage("バックグラウンドで時間切れのため読み込みを中断しました")
         } else if let message = Formatters.addSkipMessage(
-            alreadyAdded: result.alreadyPresent, unreadable: unreadable, overLimit: result.overLimit
+            // result側は、読み込んでから分かった分（識別子の無い項目・読み込み中に先に入った分）
+            alreadyAdded: plan.alreadyAdded + result.alreadyPresent,
+            unreadable: unreadable,
+            overLimit: plan.overLimit + result.overLimit
         ) {
             store.showMessage(message)
         }
