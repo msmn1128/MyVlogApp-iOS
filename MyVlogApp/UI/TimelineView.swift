@@ -20,9 +20,9 @@ struct TimelineView: View {
                 if !store.clips.isEmpty {
                     clipRow
 
-                    WaveformView()
-                        .frame(height: 95)
-                        .padding(.top, 8)
+                    if let clip = store.selectedClip {
+                        trimSection(clip)
+                    }
                 }
             }
             .padding(12)
@@ -30,6 +30,34 @@ struct TimelineView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AppColors.card(colorScheme))
         .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    /// 選択中クリップのトリム表示（Android: TrimSection）。
+    ///
+    /// 波形の上に「撮影時刻：使っている範囲（長さ）」を出す。つまみの位置だけでは、何秒から何秒を
+    /// 使っているのか読み取れないため。最短のトリム（VlogClip.minTrimMs）より短い動画はつまみの
+    /// 可動域が無いので波形を出さず、理由を出す（長さが取れなかった動画も同じ）
+    @ViewBuilder
+    private func trimSection(_ clip: VlogClip) -> some View {
+        if clip.durationMs >= VlogClip.minTrimMs {
+            Text(
+                "\(clip.timeText)：\(Formatters.durationLabel(ms: clip.startMs)) 〜 "
+                    + "\(Formatters.durationLabel(ms: clip.endMs))"
+                    + "（\(Formatters.durationLabel(ms: Formatters.roundedTrimMs(startMs: clip.startMs, endMs: clip.endMs)))）"
+            )
+            .vlogFont(12)
+            .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
+            .padding(.top, 6)
+
+            WaveformView()
+                .frame(height: 95)
+                .padding(.top, 4)
+        } else {
+            Text(clip.durationMs <= 0 ? "この動画は長さを取得できませんでした" : "この動画は短すぎてトリミングできません")
+                .vlogFont(12)
+                .foregroundStyle(AppColors.error(colorScheme))
+                .padding(.top, 6)
+        }
     }
 
     /// タイルの位置（タイル一覧の見えている範囲を原点にした座標）。選択が変わったときに、
