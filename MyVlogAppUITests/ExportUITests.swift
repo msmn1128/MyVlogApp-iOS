@@ -93,7 +93,9 @@ final class ExportUITests: XCTestCase {
     /// 回帰テスト（中止）: 中止すると一時ファイルを片付けたうえで、中止したことを通知する。
     @MainActor
     func testExportShowsProgressAndCanBeCancelled() throws {
-        let app = launchApp(clipCount: 1)
+        // クリップは長めにする。既定の2秒1本だと、結合が速くなってから（11f19ec）、「中止」を押す前に
+        // 書き出しが終わることがあり、押したつもりの位置にある「書き出し」をもう一度押していた
+        let app = launchApp(clipCount: 1, clipSeconds: 30)
 
         exportButton(in: app).tap()
         let confirm = app.descendants(matching: .any)["confirmExport"].firstMatch
