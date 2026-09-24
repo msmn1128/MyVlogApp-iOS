@@ -253,6 +253,18 @@ struct VlogStoreEditingTests {
         #expect(store.selectedClip?.texts[1].startMs == 3_000 + TextSegment.minSegmentMs)
     }
 
+    @Test("ミュートの切り替えは続けて押しても1回ずつ戻せる")
+    func muteTogglesAreUndoneOneByOne() {
+        let store = makeStore()
+        store.addClips([TestClip.make()])
+
+        store.toggleMute(at: 0)
+        store.toggleMute(at: 0)
+        store.undo()
+
+        #expect(store.selectedClip?.isMuted == true)
+    }
+
     @Test("区間ごと移動でトリムより手前の区切りが潰れない")
     func moveTrimKeepsSplitSpacing() {
         // TimelineShiftTests と同じ回帰を、実際に使われる経路（store）で確かめる

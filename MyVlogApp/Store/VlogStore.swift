@@ -412,9 +412,14 @@ final class VlogStore {
         timelineMuted.toggle()
     }
 
+    /// 長押しでのミュート切り替え。1回ずつ履歴に積む（Android: toggleClipMute）。
+    ///
+    /// 以前はタグを付けてまとめていたため、続けて2回長押しすると2回目が1回目にまとまり、
+    /// 「もとに戻す」1回で最初の状態へ戻る（＝2回目の切り替えだけを戻せない）形になっていた。
+    /// ミュートは連続で飛んでくる操作ではないので、まとめる理由が無い。
     func toggleMute(at index: Int) {
         guard clips.indices.contains(index) else { return }
-        mutateClips(tag: "mute:\(index)") {
+        mutateClips {
             clips[index].isMuted.toggle()
         }
     }
