@@ -163,6 +163,8 @@ final class ExportManager {
         // （Android: VlogExporter.export の createdAtMillis）
         let createdAt = Date()
         do {
+            // 写真に保存してよいかを、書き出しを始める前に確かめる（下のensurePhotoLibraryAddAccess）
+            try await Self.ensurePhotoLibraryAddAccess()
             let clipURLs = try await buildClipURLs(
                 clips: clips, timelineMuted: timelineMuted, includeTitle: includeTitle, titleText: titleText, tempFiles: &tempFiles
             )
@@ -253,6 +255,29 @@ final class ExportManager {
 
     private func update(_ msg: String) {
         message = msg
+    }
+
+    /// 書き出した動画を写真へ保存してよいかを、書き出しを始める前に確かめる。まだ聞いていなければここで聞く。
+    ///
+    /// 以前は書き出しが全部終わってから（写真へ保存する直前に）初めて聞いていた。初めて書き出す人は
+    /// 長い書き出しを待ったあとで許可を聞かれ、断るとその動画は捨てられた。書き出し中に別のアプリへ
+    /// 移っていると許可の画面を出せず、許可しないのと同じ扱いで失敗していた。
+    /// 許可されていなければ、始める前に理由を伝えて断る（書き出しの時間を無駄にしない）
+    private static func ensurePhotoLibraryAddAccess() async throws {
+        #if DEBUG
+        // UIテスト中は、許可の画面がXCUITestの操作を遮るので聞かない（通知の許可と同じ扱い。
+        // 保存まで通すテストは無い）
+        if UITestSupport.isRunningUITests { return }
+        #endif
+        switch PHPhotoLibrary.authorizationStatus(for: .addOnly) {
+        case .authorized, .limited:
+            return
+        case .notDetermined:
+            let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+            guard status == .authorized || status == .limited else { throw ExportError.photoLibraryAccessDenied }
+        default:
+            throw ExportError.photoLibraryAccessDenied
+        }
     }
 
     /// 書き出しに失敗したときに見せる文言。単体テストから直接呼ぶためinternal・nonisolated。
