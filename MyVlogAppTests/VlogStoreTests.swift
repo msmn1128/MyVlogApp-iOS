@@ -575,6 +575,46 @@ struct VlogStoreProjectsTests {
         #expect(store.savedProjects.count == VlogLayout.maxSavedProjects)
     }
 
+    @Test("保存すると付いた名前を知らせ、名前が空なら保存日時を名前にする")
+    func saveReportsTheNameAndDefaultsToTheDate() {
+        let store = makeStore()
+        store.addClips([photoClip("a")])
+
+        let saved = store.saveCurrentProject(name: "  ")
+
+        #expect(saved?.isEmpty == false)
+        #expect(saved?.contains(":") == true)   // 「M/d HH:mm」
+        #expect(store.toastMessage == "「\(saved ?? "")」を保存しました")
+    }
+
+    @Test("タイムラインが空なら、保存も上書きもせずに理由を知らせる")
+    func emptyTimelineIsNeitherSavedNorOverwritten() {
+        let store = makeStore()
+        store.addClips([photoClip("a")])
+        let saved = store.saveCurrentProject(name: "残す")
+        store.deleteAllClips()
+
+        #expect(store.saveCurrentProject(name: "空") == nil)
+        #expect(store.toastMessage == "保存できる編集内容がありません")
+
+        // 空で上書きすると、保存の中身が消えるだけになる
+        let target = store.savedProjects[0]
+        store.overwriteProject(id: target.id, name: target.name)
+        #expect(store.savedProjects[0].clipCount == 1)
+        #expect(saved == "残す")
+    }
+
+    @Test("上限に達したら、保存せずに理由を知らせる")
+    func projectLimitIsReported() {
+        let store = makeStore()
+        store.addClips([photoClip("a")])
+        for i in 0..<VlogLayout.maxSavedProjects { store.saveCurrentProject(name: "p\(i)") }
+
+        store.saveCurrentProject(name: "over")
+
+        #expect(store.toastMessage == "保存は\(VlogLayout.maxSavedProjects)件までです。不要なものを削除してください")
+    }
+
     @Test("動画の読み込み中は保存を断り、理由を知らせる")
     func refusesWhileImporting() {
         let store = makeStore()

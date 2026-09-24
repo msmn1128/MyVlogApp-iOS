@@ -276,23 +276,37 @@ extension VlogStore {
         return true
     }
 
-    /// いまの編集内容に名前を付けて残す。
+    /// いまの編集内容に名前を付けて残す。結果（保存した名前・断った理由）はトーストで知らせる
+    /// （Android: ProjectsController.save）。
+    /// - Parameter name: 空（空白だけ）なら保存した日時「M/d HH:mm」を名前にする
     /// - Returns: 実際に保存した名前（同名があれば連番が付いた名前）。保存しなかった場合はnil
     @discardableResult
     func saveCurrentProject(name: String) -> String? {
         guard !refuseWhileImporting() else { return nil }
-        guard savedProjects.count < VlogLayout.maxSavedProjects else { return nil }
+        guard !clips.isEmpty else {
+            showMessage("保存できる編集内容がありません")
+            return nil
+        }
+        guard savedProjects.count < VlogLayout.maxSavedProjects else {
+            showMessage("保存は\(VlogLayout.maxSavedProjects)件までです。不要なものを削除してください")
+            return nil
+        }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let label = trimmed.isEmpty
+            ? Formatters.savedAtLabel(msSinceEpoch: Int64(Date().timeIntervalSince1970 * 1000))
+            : trimmed
 
         // 同名がすでにあれば連番を付ける。以前はダイアログを開いたときの既定値しか
         // 重複を見ておらず、自分で打った名前は同名のまま並んでいた（Android: uniqueSaveName）
         let savedName = Formatters.uniqueSaveName(
-            base: name, existingNames: Set(savedProjects.map { $0.name })
+            base: label, existingNames: Set(savedProjects.map { $0.name })
         )
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         savedProjects.insert(
             makeSavedProject(id: nextProjectId(now: now), name: savedName, savedAt: now), at: 0
         )
         persistSavedProjects()
+        showMessage("「\(savedName)」を保存しました")
         return savedName
     }
 
@@ -331,10 +345,19 @@ extension VlogStore {
         Task { await refreshUnreliableShotTimes() }
     }
 
-    /// 既存の保存を、名前とidはそのままに現在の編集内容で上書きする（Android: overwriteProject）
+    /// 既存の保存を、名前とidはそのままに現在の編集内容で上書きする（Android: overwriteProject）。
+    /// 上書きされた保存の中身は「もとに戻す」では戻せないので、呼び出し側で確認を挟むこと
     func overwriteProject(id: Int64, name: String) {
         guard !refuseWhileImporting() else { return }
-        guard let idx = savedProjects.firstIndex(where: { $0.id == id }) else { return }
+        // 空のタイムラインで上書きすると、保存の中身が消えるだけになる
+        guard !clips.isEmpty else {
+            showMessage("保存できる編集内容がありません")
+            return
+        }
+        guard let idx = savedProjects.firstIndex(where: { $0.id == id }) else {
+            showMessage("この保存は上書きできませんでした")
+            return
+        }
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         savedProjects[idx] = makeSavedProject(id: id, name: name, savedAt: now)
         persistSavedProjects()

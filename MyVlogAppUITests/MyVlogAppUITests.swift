@@ -101,6 +101,37 @@ final class MyVlogAppUITests: XCTestCase {
         )
     }
 
+    /// 保存したらダイアログを閉じる。上書き（行の長押し）は確認を挟む。ライセンスを開ける
+    @MainActor
+    func testSaveDialogClosesOnSaveAndConfirmsOverwrite() throws {
+        let app = launchApp(clipCount: 1)
+        let open = app.buttons["編集内容の保存と読み出し"]
+        XCTAssertTrue(open.waitForExistence(timeout: 5))
+
+        open.tap()
+        app.buttons["この内容を保存"].tap()
+        // 回帰テスト: 開いたままだと続けて押せてしまい、同じ内容が「名前」「名前 (1)」の2件になっていた
+        XCTAssertTrue(
+            waitUntil(timeout: 3) { !app.buttons["この内容を保存"].exists },
+            "保存してもダイアログが閉じない"
+        )
+
+        open.tap()
+        let row = app.buttons.matching(NSPredicate(format: "label ENDSWITH %@", "に保存")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5), "保存した行が見つからない")
+        row.press(forDuration: 1.0)
+        XCTAssertTrue(app.alerts["上書きしますか"].waitForExistence(timeout: 3), "上書きの前に確認が出ない")
+        app.alerts["上書きしますか"].buttons["キャンセル"].tap()
+
+        app.buttons["ライセンス"].tap()
+        XCTAssertTrue(
+            app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "M PLUS U")).firstMatch
+                .waitForExistence(timeout: 3),
+            "ライセンスにフォントの表示が無い"
+        )
+        attachScreenshot(app, name: "license")
+    }
+
     /// クリップが無いとき、ひとこと欄を触ってもキーボードは開かない（打った文字の行き先が無い）
     @MainActor
     func testHitokotoIsNotEditableWithoutClips() throws {

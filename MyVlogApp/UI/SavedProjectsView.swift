@@ -9,9 +9,13 @@ struct SavedProjectsView: View {
 
     @State private var name: String = ""
     @State private var pendingDelete: SavedProject? = nil
-    @State private var showLimitAlert: Bool = false
+    /// 上書きの確認待ち。上書きも「もとに戻す」では戻せない（戻せるのはタイムラインの編集だけで、
+    /// 上書きされた保存の中身は失われる）ので、長押しでの誤操作を防ぐため確認を挟む（Android: SaveLoadDialog）
+    @State private var pendingOverwrite: SavedProject? = nil
+    @State private var showLicense: Bool = false
 
-    private var canSave: Bool { !store.clips.isEmpty }
+    /// 保存も上書きも、タイムラインが空のとき・動画の読み込み中はさせない
+    private var canSave: Bool { !store.clips.isEmpty && !store.isImporting }
 
     var body: some View {
         ZStack {
@@ -44,19 +48,12 @@ struct SavedProjectsView: View {
                 }
 
                 Button {
-                    // 名前が空のときの既定値は「無題」ではなくAndroid版と同じ保存日時にする
-                    let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let resolvedName = trimmedName.isEmpty
-                        ? Formatters.savedAtLabel(msSinceEpoch: Int64(Date().timeIntervalSince1970 * 1000))
-                        : trimmedName
-                    // 同名があれば連番が付くので、実際に付いた名前をそのまま通知に出す
-                    if let savedName = store.saveCurrentProject(name: resolvedName) {
-                        store.showMessage("「\(savedName)」を保存しました")
-                        name = nextDefaultName()
-                    } else if !store.isImporting {
-                        // 読み込み中に断られた場合はstore側が理由を通知済みなので、上限の案内は出さない
-                        showLimitAlert = true
-                    }
+                    // 保存したら閉じる。開いたままだと続けて押せてしまい、同じ内容が
+                    // 「名前」「名前 (1)」の2件になる（Android: SaveLoadDialog）。
+                    // 保存できたか（付いた名前・上限で断ったこと）はstoreがトーストで知らせる。
+                    // 名前が空なら保存日時を名前にする判断もstore側
+                    store.saveCurrentProject(name: name)
+                    onDismiss()
                 } label: {
                     Text("この内容を保存")
                         .frame(maxWidth: .infinity)
@@ -88,7 +85,9 @@ struct SavedProjectsView: View {
                                 SavedProjectRow(
                                     project: project,
                                     onLoad: { store.loadProject(project); onDismiss() },
-                                    onOverwrite: { store.overwriteProject(id: project.id, name: project.name) },
+                                    // 保存できないとき（タイムラインが空など）は長押しも受け付けない。
+                                    // 受け付けると、確認まで進んでから断ることになる
+                                    onOverwrite: canSave ? { pendingOverwrite = project } : nil,
                                     onDelete: { pendingDelete = project }
                                 )
                             }
@@ -99,6 +98,11 @@ struct SavedProjectsView: View {
                 }
 
                 HStack {
+                    // ライセンスの入口はここに置く。メイン画面のボタン列に足すと「動画を追加」と
+                    // 「書き出し」の幅が削られるため、ふだん開く補助的なダイアログの下端に寄せた（Android と同じ）
+                    Button("ライセンス") { showLicense = true }
+                        .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
+                        .vlogFont(14, weight: .semibold)
                     Spacer()
                     Button("閉じる") { onDismiss() }
                         .foregroundStyle(AppColors.primary(colorScheme))
@@ -116,10 +120,26 @@ struct SavedProjectsView: View {
             .accessibilityAddTraits(.isModal)
         }
         .onAppear { name = nextDefaultName() }
-        .alert("上限に達しています", isPresented: $showLimitAlert) {
-            Button("OK", role: .cancel) {}
+        .overlay {
+            if showLicense {
+                LicenseView(onDismiss: { showLicense = false })
+                    .transition(.opacity)
+            }
+        }
+        .animation(.default, value: showLicense)
+        .alert("上書きしますか", isPresented: Binding(
+            get: { pendingOverwrite != nil },
+            set: { if !$0 { pendingOverwrite = nil } }
+        )) {
+            Button("上書き", role: .destructive) {
+                if let target = pendingOverwrite {
+                    store.overwriteProject(id: target.id, name: target.name)
+                }
+                pendingOverwrite = nil
+            }
+            Button("キャンセル", role: .cancel) { pendingOverwrite = nil }
         } message: {
-            Text("保存は\(VlogLayout.maxSavedProjects)件までです。不要なものを削除してください")
+            Text("「\(pendingOverwrite?.name ?? "")」を、いまの編集内容で上書きします。元の保存内容には戻せません。")
         }
         .alert("削除しますか", isPresented: Binding(
             get: { pendingDelete != nil },
@@ -148,7 +168,8 @@ struct SavedProjectsView: View {
 private struct SavedProjectRow: View {
     let project: SavedProject
     let onLoad: () -> Void
-    let onOverwrite: () -> Void
+    /// いま上書きできないときはnil（長押しを受け付けず、読み上げのアクションにも出さない）
+    let onOverwrite: (() -> Void)?
     let onDelete: () -> Void
 
     @Environment(\.colorScheme) var colorScheme
@@ -178,7 +199,7 @@ private struct SavedProjectRow: View {
         .background(RoundedRectangle(cornerRadius: 8).fill(AppColors.card(colorScheme)))
         .contentShape(Rectangle())
         .onTapGesture { onLoad() }
-        .onLongPressGesture { onOverwrite() }
+        .onLongPressGesture { onOverwrite?() }
         // 読み出し（タップ）と上書き（長押し）はジェスチャーでしか用意しておらず、
         // VoiceOverからはどちらも実行できなかった。行をひとつの項目にまとめ、
         // 既定の操作を「読み出し」、上書きと削除をカスタム操作として出す
@@ -188,7 +209,7 @@ private struct SavedProjectRow: View {
         .accessibilityAddTraits(.isButton)
         .accessibilityHint("読み出すと、いまの編集内容を置き換えます")
         .accessibilityAction { onLoad() }
-        .accessibilityAction(named: "この内容で上書き") { onOverwrite() }
+        .modifier(OverwriteAction(onOverwrite: onOverwrite))
         .accessibilityAction(named: "削除") { onDelete() }
     }
 
@@ -198,5 +219,18 @@ private struct SavedProjectRow: View {
 
     private var durationLabel: String {
         Formatters.durationLabel(ms: project.totalMs)
+    }
+}
+
+/// 上書きのアクションを、上書きできるときだけVoiceOverに出す
+private struct OverwriteAction: ViewModifier {
+    let onOverwrite: (() -> Void)?
+
+    func body(content: Content) -> some View {
+        if let onOverwrite {
+            content.accessibilityAction(named: "この内容で上書き", onOverwrite)
+        } else {
+            content
+        }
     }
 }
