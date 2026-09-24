@@ -27,9 +27,14 @@ nonisolated struct TextSegment: Codable, Equatable, Hashable {
     /// 書き出しから文字が消える。並びが崩れているだけなら文言は全部活かしたいので、
     /// 全区間を白紙に差し替えるのではなく「並べ替え」と「先頭の位置だけ0へ」に留める
     /// （1件目のstartMsが壊れているだけで残り全部の文言まで消さないため）。
+    ///
+    /// 負の位置は0へ丸めてから並べる。下で直すのは先頭の1件だけなので、負の位置が2件以上あると
+    /// 2件目以降が0より前に残り、昇順が崩れていた（[-5, -3, 1000] → [0, -3, 1000]。Android cd569d5）
     static func normalized(_ segments: [TextSegment]) -> [TextSegment] {
         guard !segments.isEmpty else { return [TextSegment()] }
-        let sorted = segments.sorted { $0.startMs < $1.startMs }
+        let sorted = segments
+            .map { TextSegment(startMs: max(0, $0.startMs), text: $0.text) }
+            .sorted { $0.startMs < $1.startMs }
         guard let first = sorted.first, first.startMs != 0 else { return sorted }
         var head = first
         head.startMs = 0

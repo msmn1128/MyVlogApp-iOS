@@ -82,6 +82,17 @@ struct VlogClipCodableTests {
         #expect(clip.texts[1].startMs == 4_000)
     }
 
+    @Test("負の位置が2件以上あっても、0へ丸めてから並べるので昇順が崩れない")
+    func clampsNegativeSegmentPositions() throws {
+        let clip = try decode(baseJSON(texts: [
+            ["startMs": -5, "text": "A"],
+            ["startMs": -3, "text": "B"],
+            ["startMs": 1_000, "text": "C"]
+        ]))
+        #expect(clip.texts.map(\.startMs) == [0, 0, 1_000])
+        #expect(clip.texts.map(\.text) == ["A", "B", "C"])
+    }
+
     @Test("区間が空なら既定の1件を入れる（0件だと書き出しから文字が消える）")
     func emptySegmentsBecomeDefault() throws {
         let clip = try decode(baseJSON(texts: []))
