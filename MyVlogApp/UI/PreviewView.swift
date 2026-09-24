@@ -9,8 +9,30 @@ import AVFoundation
 struct PreviewView: View {
     @Environment(VlogStore.self) private var store
     @Environment(VideoPlayerManager.self) private var playerManager
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
+        if store.selectedClip == nil {
+            emptyGuide
+        } else {
+            canvas
+        }
+    }
+
+    /// クリップが無いときの案内（Android: PreviewPane の selectedClip == null）。
+    /// 黒いキャンバスだけでは、何をすればよいのか分からなかった
+    private var emptyGuide: some View {
+        ZStack {
+            AppColors.card(colorScheme)
+            Text("「動画を追加」から動画を選んでください")
+                .vlogFont(14)
+                .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
+                .multilineTextAlignment(.center)
+                .padding(24)
+        }
+    }
+
+    private var canvas: some View {
         GeometryReader { geo in
             let canvasSize = geo.size  // already constrained 16:9 by caller
             let scale = canvasSize.height / VlogLayout.canvasHeight
@@ -76,6 +98,10 @@ private struct PreviewCaptionLayer: View {
         .accessibilityElement()
         .accessibilityIdentifier("preview")
         .accessibilityLabel("プレビュー（タップで再生・一時停止）")
+        // 押すと何が起きるかを、ボタンとして伝える（Android: onClickLabel「再生／一時停止」・Role.Button）。
+        // 付けていなかった頃は、VoiceOverではプレビューを押せることが分からなかった
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { playerManager.togglePlayPause() }
         // 読み上げは人が聞いて分かる形（0:01）にする。
         // 以前はミリ秒の生値をそのまま値にしていたため「1,234」と読まれていた
         // （UIテスト用の目印を、そのまま利用者向けの読み上げにも使ってしまっていた）
