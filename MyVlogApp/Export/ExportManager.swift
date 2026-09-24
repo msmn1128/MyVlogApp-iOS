@@ -182,8 +182,7 @@ final class ExportManager {
             update("")
             showMessage("書き出しを中止しました")
         } catch {
-            // 容量不足は、AVFoundationの英語の文言ではなく、どうすればよいかまで日本語で伝える
-            let message = ExportSpace.isNoSpaceError(error) ? ExportSpace.ranOutOfSpaceMessage : error.localizedDescription
+            let message = Self.failureMessage(for: error)
             update("エラー: \(message)")
             notifyCompletion(title: "書き出しに失敗しました", body: message)
             showMessage(message)
@@ -249,6 +248,21 @@ final class ExportManager {
 
     private func update(_ msg: String) {
         message = msg
+    }
+
+    /// 書き出しに失敗したときに見せる文言。単体テストから直接呼ぶためinternal・nonisolated。
+    ///
+    /// - 容量不足は、どうすればよいかまで日本語で伝える（ExportSpace）
+    /// - アプリが自分で出すエラー（ExportError）は、その日本語の文言のまま
+    /// - それ以外（AVFoundationなど）は、英語の文言だけが出ていて、書き出しに失敗したことすら
+    ///   読み取りにくかった。「書き出しに失敗しました」と日本語で始め、元の文言は括弧に添える
+    ///   （原因を追うときの手がかりとして残す）
+    nonisolated static func failureMessage(for error: Error) -> String {
+        if ExportSpace.isNoSpaceError(error) { return ExportSpace.ranOutOfSpaceMessage }
+        if let exportError = error as? ExportError, let description = exportError.errorDescription {
+            return description
+        }
+        return "書き出しに失敗しました（\(error.localizedDescription)）"
     }
 
     /// タイトルカードへ焼き込む文言を決める（Android: VlogExporter.exportの

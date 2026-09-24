@@ -43,4 +43,16 @@ struct ExportSpaceTests {
         let message = Formatters.missingClipsMessage(indices: [0, 2], clips: clips)
         #expect(message.hasPrefix("1本目（09:00）、3本目（11:45）の動画が見つかりません。"))
     }
+
+    @Test("書き出しに失敗した文言は日本語で始め、元の文言は括弧に添える")
+    func failureMessageIsJapanese() {
+        let avError = NSError(domain: AVFoundationErrorDomain, code: -11800,
+                              userInfo: [NSLocalizedDescriptionKey: "The operation could not be completed"])
+        #expect(ExportManager.failureMessage(for: avError) == "書き出しに失敗しました（The operation could not be completed）")
+        // アプリ自身のエラーはその日本語のまま
+        #expect(ExportManager.failureMessage(for: ExportError.noVideoTrack) == "動画トラックが見つかりません")
+        // 容量不足はどうすればよいかまで
+        #expect(ExportManager.failureMessage(for: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOSPC)))
+                == ExportSpace.ranOutOfSpaceMessage)
+    }
 }
