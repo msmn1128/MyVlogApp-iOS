@@ -321,7 +321,11 @@ final class VlogStore {
     func moveSplit(index: Int, newAtMs: Int64) -> Int64? {
         guard let clip = selectedClip, clip.texts.indices.contains(index), index != 0 else { return nil }
         let minGap = VlogClip.splitMinDistanceMs
-        let lowerBound = clip.texts[index - 1].startMs + minGap
+        // 下限・上限とも、動画全体ではなくいまのトリム範囲で止める。手前側は、1つ前の区切りと
+        // トリム開始のうち後ろにある方から間隔を取る。1つ前が先頭区間（絶対位置0）だと、
+        // トリムで頭を落としていても0が基準になり、切り落とした部分まで区切りを動かせてしまい、
+        // そこへシークしたプレビューに書き出されないコマが出ていた（Android: TimelineStore.moveSplit）
+        let lowerBound = max(clip.texts[index - 1].startMs, clip.startMs) + minGap
         let upperBound = (clip.texts.indices.contains(index + 1) ? clip.texts[index + 1].startMs : clip.endMs) - minGap
         guard lowerBound <= upperBound else { return nil }
 

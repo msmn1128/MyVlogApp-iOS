@@ -239,6 +239,20 @@ struct VlogStoreEditingTests {
         #expect(store.selectedClip?.trimBounds == TrimBounds(startMs: 0, endMs: 1_500))
     }
 
+    @Test("区切りはトリム開始より手前（切り落とした部分）へは動かせない")
+    func splitCannotMoveBeforeTrimStart() {
+        let store = makeStore()
+        store.addClips([TestClip.make(
+            durationMs: 10_000, startMs: 3_000, endMs: 9_000,
+            texts: TestClip.segments([(0, "前半"), (6_000, "後半")])
+        )])
+
+        let moved = store.moveSplit(index: 1, newAtMs: 0)
+
+        #expect(moved == 3_000 + TextSegment.minSegmentMs)
+        #expect(store.selectedClip?.texts[1].startMs == 3_000 + TextSegment.minSegmentMs)
+    }
+
     @Test("区間ごと移動でトリムより手前の区切りが潰れない")
     func moveTrimKeepsSplitSpacing() {
         // TimelineShiftTests と同じ回帰を、実際に使われる経路（store）で確かめる
