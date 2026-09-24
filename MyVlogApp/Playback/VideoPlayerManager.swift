@@ -26,6 +26,9 @@ final class VideoPlayerManager {
     @ObservationIgnored nonisolated(unsafe) private var boundaryObserver: Any?
     @ObservationIgnored private var endNoteObserver: NSObjectProtocol?
     @ObservationIgnored private var loadTask: Task<Void, Never>?
+    /// いまの読み込みの番号。取り消された古い読み込みが、新しい読み込みの「読み込み中」を
+    /// 下ろしてしまわないよう、自分が最新のときだけ下ろす（loadClip / doLoad）
+    @ObservationIgnored private var loadGeneration = 0
     /// AVPlayerの再生速度の監視。電話・ほかのアプリの音・イヤホンを抜いたときなど、
     /// こちらがpause()を呼ばずに止まったときも`isPlaying`を合わせるため
     @ObservationIgnored private var rateObservation: NSKeyValueObservation?
@@ -102,6 +105,7 @@ final class VideoPlayerManager {
 
     func reset() {
         loadTask?.cancel()
+        loadGeneration += 1
         itemStatusObservation = nil
         pause()
         removeBoundaryObserver()
@@ -122,10 +126,16 @@ final class VideoPlayerManager {
         // 止めてから頭を出す（Android: select → seekAndPause）。止めないと、再生中に別のタイルを
         // 選んだとき、AVPlayerの速度が残ったまま新しいクリップが勝手に流れ始めていた
         if !autoPlay { pause() }
-        loadTask = Task { await doLoad(clip, autoPlay: autoPlay) }
+        loadGeneration += 1
+        let generation = loadGeneration
+        loadTask = Task { await doLoad(clip, autoPlay: autoPlay, generation: generation) }
     }
 
-    private func doLoad(_ clip: VlogClip, autoPlay: Bool) async {
+    private func doLoad(_ clip: VlogClip, autoPlay: Bool, generation: Int) async {
+        // 取り消された古い読み込みが、あとから始まった読み込みの表示を下ろさないようにする。
+        // 以前はどの経路でも isLoading = false にしていたので、クリップを素早く切り替えると、
+        // まだ読み込んでいる最中なのに「読み込み中」の表示が消えることがあった
+        defer { if generation == loadGeneration { isLoading = false } }
         isLoading   = true
         trimStartMs = clip.startMs
         trimEndMs   = clip.endMs
@@ -134,7 +144,7 @@ final class VideoPlayerManager {
 
         do {
             let asset = try await AssetLoader.shared.load(clip: clip, forPreview: true)
-            guard !Task.isCancelled else { isLoading = false; return }
+            guard !Task.isCancelled else { return }
             let item = AVPlayerItem(asset: asset)
             observeFailure(of: item, clip: clip)
             player.replaceCurrentItem(with: item)
@@ -149,7 +159,6 @@ final class VideoPlayerManager {
             // フォトライブラリに見つからない・アクセスできない動画はここへ来る
             if !Task.isCancelled { reportPlaybackError(clip: clip) }
         }
-        isLoading = false
     }
 
     // MARK: - 再生できない動画
