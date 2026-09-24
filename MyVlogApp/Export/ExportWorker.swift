@@ -139,6 +139,10 @@ actor ExportWorker {
                 }
             }
 
+            // 読み取りが途中で失敗しても copyNextSampleBuffer は nil を返すだけで、ループはふつうに抜ける。
+            // 確かめずに書き終えると、コマの足りない（時には1コマも無い）動画ができ、あとの工程で
+            // 「長さを読めない」といった原因の分からないエラーになっていた。読み取りの失敗はここで伝える
+            if reader.status == .failed { throw reader.error ?? ExportError.sessionCreationFailed }
             writerInput.markAsFinished()
             await writer.finishWriting()
             if let err = writer.error { throw err }
