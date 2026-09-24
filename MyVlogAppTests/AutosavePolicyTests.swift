@@ -50,3 +50,19 @@ struct AutosavePolicyTests {
         #expect(policy.shouldSaveOnExit(canUndo: true))
     }
 }
+
+/// 使われなくなった取り込みファイルの見分け方（VlogStore.isImportedCopyName）
+@Suite("取り込みでコピーしたファイルの名前")
+struct ImportedCopyNameTests {
+
+    @Test("UUID_元の名前 の形だけを取り込みのコピーとみなす")
+    func recognizesOnlyImportedCopies() {
+        #expect(VlogStore.isImportedCopyName("0F8A2C1E-3B4D-4E5F-8A9B-0C1D2E3F4A5B_IMG_0001.MOV"))
+        // アンダースコアを含む元の名前でもよい
+        #expect(VlogStore.isImportedCopyName("0F8A2C1E-3B4D-4E5F-8A9B-0C1D2E3F4A5B_PXL_20260901_101500.mp4"))
+        // 取り込み以外で置かれたファイル（UIテストの仕込みなど）には触らない
+        #expect(!VlogStore.isImportedCopyName("uitest_clip_0.mov"))
+        #expect(!VlogStore.isImportedCopyName("IMG_0001.MOV"))
+        #expect(!VlogStore.isImportedCopyName("0F8A2C1E-3B4D-4E5F-8A9B-0C1D2E3F4A5B_"))
+    }
+}

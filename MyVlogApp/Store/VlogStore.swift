@@ -68,6 +68,10 @@ final class VlogStore {
         // あとから来た復元が丸ごと上書きしてしまう（詳しくはrestoreAutoSaveのコメント）
         let dropped = restoreAutoSave()
         autosavePolicy.onRestored(droppedCount: dropped)
+        // 開けない動画を落とした回は消さない。落とした動画のコピーも「使われていない」と判断されてしまう。
+        // 保存先がアプリ本来の領域（.standard）のときだけ行う。テストやUIテストの使い捨ての領域から
+        // 判断すると、アプリ本来の編集内容が使っているコピーまで「使われていない」に見えて消してしまう
+        if dropped == 0, defaults === UserDefaults.standard { releaseUnreferencedImportedFiles() }
         // 撮影時刻の取り直しだけは動画を開くので非同期。こちらは並び順も編集内容も
         // 変えず、いま並んでいるクリップに後から値を足すだけなので競合しない
         Task { await refreshUnreliableShotTimes() }

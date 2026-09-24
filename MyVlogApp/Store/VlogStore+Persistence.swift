@@ -150,6 +150,46 @@ extension VlogStore {
         return found
     }
 
+    // MARK: - 使われなくなった取り込みファイル
+
+    /// ファイルから取り込んだ動画のコピー（Documents内の`UUID_元の名前`）のうち、タイムラインにも
+    /// 一時保存にも使われていないものを消す（Android: releaseUnreferencedPermissions と同じ役割）。
+    ///
+    /// ファイルから取り込むときは動画をDocumentsへコピーする。クリップを削除しても、
+    /// 「もとに戻す」で戻せるようにコピーはその場では消さないので、消さないまま使い続けると
+    /// タイムラインにも一時保存にも現れない動画がストレージを占め続けていた。
+    /// 起動直後（履歴は空で、もとに戻す先が無い）に、参照されていないものだけを消す。
+    ///
+    /// 開けない動画を落として復元した回は呼ばない（自動保存を保留するのと同じ理由。AutosavePolicy）。
+    /// 一覧はこの場で（メインスレッドで）取るので、このあと始まった取り込みのコピーを消すことはない。
+    /// 消すのは`UUID_`で始まる名前だけ（取り込み以外で置かれたファイルには触らない）。
+    func releaseUnreferencedImportedFiles() {
+        guard let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first,
+              let entries = try? FileManager.default.contentsOfDirectory(
+                at: documents, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+              ) else { return }
+
+        let referenced = Set(
+            (clips + savedProjects.flatMap(\.clips)).compactMap { clip in
+                clip.relativeFilePath ?? clip.fileURL?.lastPathComponent
+            }
+        )
+        let unused = entries.filter { url in
+            Self.isImportedCopyName(url.lastPathComponent) && !referenced.contains(url.lastPathComponent)
+        }
+        guard !unused.isEmpty else { return }
+        Task.detached(priority: .utility) {
+            for url in unused { try? FileManager.default.removeItem(at: url) }
+        }
+    }
+
+    /// 取り込みでコピーしたファイルの名前か（`UUID_元の名前`。ContentView+Import.makeClipFromURL）
+    nonisolated static func isImportedCopyName(_ name: String) -> Bool {
+        let parts = name.split(separator: "_", maxSplits: 1)
+        guard parts.count == 2, !parts[1].isEmpty else { return false }
+        return UUID(uuidString: String(parts[0])) != nil
+    }
+
     // MARK: - 撮影時刻の取り直し
 
     /// 撮影時刻を確かな手がかりから取れていないクリップ（`shotAtReliable`がfalse）の時刻を
