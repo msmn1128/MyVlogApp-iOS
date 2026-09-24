@@ -44,8 +44,9 @@ extension XCTestCase {
         // クリップの生成（AVAssetWriter）と投入が終わるまで待つ。
         // 分割ボタンは選択中のクリップがあるときだけ有効になるので、これを目印にする
         let splitButton = app.buttons["ここでひとことを分割（動画は切りません）"]
+        // iPadのシミュレータは動画を作るのが遅く、8本だと40秒を超えることがあるので長めに待つ
         XCTAssertTrue(
-            waitUntil(timeout: 40) { splitButton.exists && splitButton.isEnabled },
+            waitUntil(timeout: 120) { splitButton.exists && splitButton.isEnabled },
             "テスト用クリップが入らなかった"
         )
         return app
