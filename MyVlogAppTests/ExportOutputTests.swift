@@ -248,6 +248,57 @@ struct ExportOutputTests {
         #expect(abs((tracks.merged.audio ?? 0) - 1.6) < 0.05, "つないだ音声の長さ: \(tracks.merged)")
     }
 
+    /// 動画の音声トラックに入っている形式の数と、そのサンプリング周波数
+    private func audioFormats(of url: URL) async throws -> [Double] {
+        guard let track = try await AVURLAsset(url: url).loadTracks(withMediaType: .audio).first else { return [] }
+        return try await track.load(.formatDescriptions).compactMap {
+            CMAudioFormatDescriptionGetStreamBasicDescription($0)?.pointee.mSampleRate
+        }
+    }
+
+    @Test("音声の形式が違うクリップをつないでも、書き出した動画の音声は1つの形式にそろう")
+    func mixedAudioFormatsAreUnified() async throws {
+        // 回帰テスト: 結合で音声を変換せずにつないでいたため、44.1kHzと48kHzのクリップを混ぜると
+        // 1本の音声トラックに形式が2つ混ざっていた。再生するアプリや変換によっては音が途切れる・
+        // 音程がずれる（Android版は最後に音声だけを1回AACへ変換している）
+        let a = try await TestVideoFactory.makeVideoWithAudio(videoSeconds: 1, audioSeconds: 1, sampleRate: 44_100)
+        let b = try await TestVideoFactory.makeVideoWithAudio(videoSeconds: 1, audioSeconds: 1, sampleRate: 48_000)
+        var clipA = makeClip(source: a); clipA.durationMs = 1_000
+        var clipB = makeClip(source: b); clipB.durationMs = 1_000
+        let outA = try await ExportRunner().processClip(clipA, silent: false)
+        let outB = try await ExportRunner().processClip(clipB, silent: false)
+        let merged = try await ExportRunner().concatenate(urls: [outA, outB])
+        defer { TestVideoFactory.remove(a, b, outA, outB, merged) }
+
+        #expect(try await audioFormats(of: merged) == [48_000], "音声の形式が1つにそろっていない")
+        let tracks = try await TestVideoFactory.trackSeconds(of: merged)
+        #expect(abs(tracks.video - 2.0) < 0.05, "映像の長さ: \(tracks)")
+        // 映像はそのまま書くので、色空間の情報（BT.709）も残っていること
+        let video = try #require(try await AVURLAsset(url: merged).loadTracks(withMediaType: .video).first)
+        let format = try #require(try await video.load(.formatDescriptions).first)
+        let extensions = CMFormatDescriptionGetExtensions(format) as? [String: Any] ?? [:]
+        #expect(extensions[kCMFormatDescriptionExtension_ColorPrimaries as String] as? String
+                == kCMFormatDescriptionColorPrimaries_ITU_R_709_2 as String)
+    }
+
+    @Test("音声の無いクリップのあとのクリップの音は、そのクリップの映像の頭から鳴る")
+    func audioStaysAlignedAfterASilentClip() async throws {
+        // 1本目は音声なし（1秒）、2本目は頭から鳴る。つないだ動画では、ちょうど1秒の位置から鳴ること。
+        // 音声だけを変換し直すときに、無音の区間を詰めたり、変換の遅れ（AACの頭の無音）ぶんずれたり
+        // していないかを確かめる（Android: 区切りのつなぎ目で音と映像がずれないことの確認）
+        let silent = try await TestVideoFactory.makeSolidColorVideo(seconds: 1)
+        let voiced = try await TestVideoFactory.makeVideoWithAudio(videoSeconds: 1, audioSeconds: 1, sampleRate: 48_000)
+        var clipA = makeClip(source: silent); clipA.durationMs = 1_000
+        var clipB = makeClip(source: voiced); clipB.durationMs = 1_000
+        let outA = try await ExportRunner().processClip(clipA, silent: false)
+        let outB = try await ExportRunner().processClip(clipB, silent: false)
+        let merged = try await ExportRunner().concatenate(urls: [outA, outB])
+        defer { TestVideoFactory.remove(silent, voiced, outA, outB, merged) }
+
+        let onset = try #require(try await TestVideoFactory.audioOnsetSeconds(of: merged), "音が鳴っていない")
+        #expect(abs(onset - 1.0) <= 0.06, "2本目の音が \(onset) 秒から鳴った（1.0秒のはず）")
+    }
+
     // MARK: - タイトルカード
 
     @Test("タイトルカードは2秒・キャンバス一杯で、文言が中央に出る")

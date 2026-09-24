@@ -392,21 +392,131 @@ actor ExportWorker {
         // 出力はMP4なので拡張子も.mp4にする。中身と拡張子が食い違っていると、
         // 受け取り側（写真ライブラリ等）が拡張子からコンテナを推測して誤ることがある
         let outURL = tempURL("merged", ext: "mp4")
-        // 各クリップは既にキャンバスサイズ・同じH264設定で書き出し済みなので、結合だけなら
-        // パススルーで再エンコードなしに済ませられる（mergeClipAudioと同じ狙い）。
-        let presetName = await bestExportPreset(for: composition, outputFileType: .mp4, fallback: AVAssetExportPreset1920x1080)
-        guard let session = AVAssetExportSession(asset: composition, presetName: presetName) else {
-            throw ExportError.sessionCreationFailed
-        }
-        session.shouldOptimizeForNetworkUse = true
         do {
-            try await session.export(to: outURL, as: .mp4)
+            try await writeMerged(composition: composition, videoTrack: videoTrack, audioTrack: audioTrack, to: outURL)
         } catch {
             try? FileManager.default.removeItem(at: outURL)
             throw error
         }
         return outURL
     }
+
+    /// 結合した並びを1本の動画に書く。映像はそのまま（もう一度圧縮しない）、音声だけを1回、
+    /// AAC（48kHz・ステレオ・128kbps）へ変換する（Android: 映像は -c:v copy、音声だけAACへ1回変換）。
+    ///
+    /// 以前は映像も音声もそのまま（パススルー）つないでいた。クリップの音声の形式（サンプリング周波数・
+    /// チャンネル数・符号化方式）は素材ごとに違い、たとえば44.1kHzと48kHzのクリップを混ぜると、1本の
+    /// 音声トラックに形式が2つ混ざっていた。写真アプリでは再生できても、ほかのアプリや編集ソフト、
+    /// SNSへ上げたときの変換で、音が途切れたり音程がずれたりする原因になる。
+    ///
+    /// 音声はクリップごとではなく、ここで1回だけ変換する。クリップごとにAACへ変換すると、AACの頭の
+    /// 無音（エンコーダの遅れ）がクリップの数だけ入り、つなぐたびに音がずれていく（Androidで踏んだもの）。
+    /// 音声の無い区間（無音のクリップ・効果音の無いタイトル）は、読み取りの段階で無音として埋まる。
+    private func writeMerged(
+        composition: AVMutableComposition, videoTrack: AVMutableCompositionTrack,
+        audioTrack: AVMutableCompositionTrack, to outURL: URL
+    ) async throws {
+        let reader = try AVAssetReader(asset: composition)
+        let videoOutput = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: nil)
+        videoOutput.alwaysCopiesSampleData = false
+        guard reader.canAdd(videoOutput) else { throw ExportError.sessionCreationFailed }
+        reader.add(videoOutput)
+
+        // 音声が1つも入っていない（全部無音・タイトルも無音）なら、音声トラックは作らない
+        let hasAudio = audioTrack.segments.contains { !$0.isEmpty }
+        var audioOutput: AVAssetReaderAudioMixOutput?
+        if hasAudio {
+            let output = AVAssetReaderAudioMixOutput(audioTracks: [audioTrack], audioSettings: Self.mergedPCMSettings)
+            guard reader.canAdd(output) else { throw ExportError.sessionCreationFailed }
+            reader.add(output)
+            audioOutput = output
+        }
+
+        let writer = try AVAssetWriter(outputURL: outURL, fileType: .mp4)
+        writer.shouldOptimizeForNetworkUse = true
+        // 映像はそのまま書くので、形式は元のクリップ（書き出しの設定でそろえてある）から受け継ぐ
+        let videoFormat = try await videoTrack.load(.formatDescriptions).first
+        let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: nil, sourceFormatHint: videoFormat)
+        videoInput.expectsMediaDataInRealTime = false
+        guard writer.canAdd(videoInput) else { throw ExportError.sessionCreationFailed }
+        writer.add(videoInput)
+
+        var audioInput: AVAssetWriterInput?
+        if hasAudio {
+            let input = AVAssetWriterInput(mediaType: .audio, outputSettings: Self.mergedAACSettings)
+            input.expectsMediaDataInRealTime = false
+            guard writer.canAdd(input) else { throw ExportError.sessionCreationFailed }
+            writer.add(input)
+            audioInput = input
+        }
+
+        guard reader.startReading() else { throw reader.error ?? ExportError.sessionCreationFailed }
+        guard writer.startWriting() else { throw writer.error ?? ExportError.sessionCreationFailed }
+        writer.startSession(atSourceTime: .zero)
+
+        // 映像と音声は、それぞれ書ける分だけ交互に流す。片方だけ先に流し切ろうとすると、
+        // 書き手がもう片方を待って止まり、そのまま進まなくなる
+        await withTaskCancellationHandler {
+            async let video: Void = Self.pump(videoOutput, into: videoInput, label: "video")
+            if let audioOutput, let audioInput {
+                async let audio: Void = Self.pump(audioOutput, into: audioInput, label: "audio")
+                _ = await (video, audio)
+            } else {
+                await video
+            }
+        } onCancel: {
+            reader.cancelReading()
+            writer.cancelWriting()
+        }
+        try Task.checkCancellation()
+        if reader.status == .failed { throw reader.error ?? ExportError.sessionCreationFailed }
+
+        await writer.finishWriting()
+        if let error = writer.error { throw error }
+    }
+
+    /// 読み手から書き手へ、書き手が受け取れるときに流す。読み切ったら（または中止・失敗で読めなく
+    /// なったら）書き手の入口を閉じて戻る
+    private nonisolated static func pump(
+        _ output: AVAssetReaderOutput, into input: AVAssetWriterInput, label: String
+    ) async {
+        nonisolated(unsafe) let output = output
+        nonisolated(unsafe) let input = input
+        let queue = DispatchQueue(label: "com.msmn1128.myvlogapp.merge.\(label)", qos: .utility)
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            var finished = false
+            input.requestMediaDataWhenReady(on: queue) {
+                guard !finished else { return }
+                while input.isReadyForMoreMediaData {
+                    guard let buffer = output.copyNextSampleBuffer(), input.append(buffer) else {
+                        finished = true
+                        input.markAsFinished()
+                        continuation.resume()
+                        return
+                    }
+                }
+            }
+        }
+    }
+
+    /// 結合で音声を読み取るときの形式（無圧縮の16bit・48kHz・ステレオ）。ここで形式をそろえる
+    private static let mergedPCMSettings: [String: Any] = [
+        AVFormatIDKey:               kAudioFormatLinearPCM,
+        AVSampleRateKey:             48_000,
+        AVNumberOfChannelsKey:       2,
+        AVLinearPCMBitDepthKey:      16,
+        AVLinearPCMIsFloatKey:       false,
+        AVLinearPCMIsBigEndianKey:   false,
+        AVLinearPCMIsNonInterleaved: false
+    ]
+
+    /// 書き出す音声の形式（AAC・48kHz・ステレオ・128kbps。Android: AUDIO_BITRATE_BPS / AUDIO_SAMPLE_RATE系と同じ考え方）
+    private static let mergedAACSettings: [String: Any] = [
+        AVFormatIDKey:         kAudioFormatMPEG4AAC,
+        AVSampleRateKey:       48_000,
+        AVNumberOfChannelsKey: 2,
+        AVEncoderBitRateKey:   ExportSpace.audioBitRate
+    ]
 
     // MARK: - Save to camera roll
 

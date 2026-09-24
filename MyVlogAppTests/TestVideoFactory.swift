@@ -57,7 +57,8 @@ nonisolated enum TestVideoFactory {
         size: CGSize = CGSize(width: 320, height: 240),
         fps: Int32 = 30,
         color: UIColor = UIColor(white: 0.12, alpha: 1),
-        colorProperties: [String: String]? = nil
+        colorProperties: [String: String]? = nil,
+        transform: CGAffineTransform = .identity
     ) async throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("exporttest_\(UUID().uuidString).mov")
@@ -72,6 +73,8 @@ nonisolated enum TestVideoFactory {
             ].merging(colorProperties.map { [AVVideoColorPropertiesKey: $0] } ?? [:]) { $1 }
         )
         input.expectsMediaDataInRealTime = false
+        // 縦向きで撮った動画のように、画素は横長のまま「回して見せる」情報だけを付ける
+        input.transform = transform
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(
             assetWriterInput: input,
             sourcePixelBufferAttributes: [
@@ -102,12 +105,13 @@ nonisolated enum TestVideoFactory {
 
     /// 映像と長さの違う音声（440Hzの音）を持つ動画を作る。音声の長さだけを映像とずらしたいときに使う
     /// （素材の音声は映像より数十ms短いことがあり、その扱いを確かめるため）。
-    static func makeVideoWithAudio(videoSeconds: Double, audioSeconds: Double) async throws -> URL {
+    static func makeVideoWithAudio(
+        videoSeconds: Double, audioSeconds: Double, sampleRate: Double = 44_100
+    ) async throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("exporttest_audio_\(UUID().uuidString).mov")
         let size = CGSize(width: 320, height: 240)
         let fps: Int32 = 30
-        let sampleRate = 44_100.0
 
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
         let video = AVAssetWriterInput(mediaType: .video, outputSettings: [
@@ -186,6 +190,39 @@ nonisolated enum TestVideoFactory {
         await writer.finishWriting()
         guard writer.status == .completed else { throw writer.error ?? TestVideoError.writerFailed }
         return url
+    }
+
+    /// 音声が最初に鳴り始める時刻（秒）。50msごとの音量が`threshold`を超えた最初の区間の頭。鳴らなければnil
+    static func audioOnsetSeconds(of url: URL, threshold: Float = 0.05) async throws -> Double? {
+        let asset = AVURLAsset(url: url)
+        guard let track = try await asset.loadTracks(withMediaType: .audio).first else { return nil }
+        let sampleRate = 8_000.0
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
+            AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: sampleRate, AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false, AVLinearPCMIsNonInterleaved: false
+        ])
+        reader.add(output)
+        reader.startReading()
+        var samples: [Int16] = []
+        var firstTime: Double?
+        while let buffer = output.copyNextSampleBuffer() {
+            if firstTime == nil { firstTime = CMSampleBufferGetPresentationTimeStamp(buffer).seconds }
+            guard let block = CMSampleBufferGetDataBuffer(buffer) else { continue }
+            let length = CMBlockBufferGetDataLength(block)
+            var chunk = [Int16](repeating: 0, count: length / 2)
+            CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: length, destination: &chunk)
+            samples += chunk
+        }
+        let window = Int(sampleRate * 0.05)
+        var start = 0
+        while start + window <= samples.count {
+            let rms = sqrt(samples[start..<(start + window)].reduce(Float(0)) { $0 + Float($1) * Float($1) } / Float(window)) / 32768
+            if rms > threshold { return (firstTime ?? 0) + Double(start) / sampleRate }
+            start += window
+        }
+        return nil
     }
 
     /// 動画の各トラックの長さ（秒）
