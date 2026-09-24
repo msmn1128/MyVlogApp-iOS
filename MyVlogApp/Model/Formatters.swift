@@ -29,11 +29,27 @@ nonisolated enum Formatters {
         return f.string(from: date)
     }
 
-    /// ミリ秒を「m:ss」表記に（TimelineView: durationLabel、SavedProjectsView: durationLabel）
+    /// ミリ秒を「m:ss」表記に（Android: formatSeconds）。
+    ///
+    /// 秒は四捨五入する。切り捨てだと、トリミングの範囲の表示が「0:03 〜 0:15（0:11）」
+    /// （実際は3.2〜15.1秒、11.9秒）のように、引き算と合わなく見えていた。長さの側は
+    /// `roundedTrimMs`で、丸めた両端の差にそろえる。数字の字形はPOSIXロケールで固定する
     static func durationLabel(ms: Int64) -> String {
-        let s = max(0, ms) / 1000
-        return String(format: "%d:%02d", s / 60, s % 60)
+        let s = roundToSecondMs(max(0, ms)) / 1000
+        return String(format: "%d:%02d", locale: fixedLocale, s / 60, s % 60)
     }
+
+    /// トリミング後の長さの、表示用の値。両端をそれぞれ秒へ丸めてから差を取る（Android: roundedTrimMs）。
+    ///
+    /// 長さそのもの（end−start）を丸めると、両端の表示の引き算と1秒ずれることがある
+    /// （3.5〜15.4秒は「0:04 〜 0:15」なのに、長さ11.9秒を丸めると「0:12」）。
+    /// 表示はだいたいの目安なので、見た目の引き算が必ず合う方を採る。書き出しの長さには使わないこと。
+    static func roundedTrimMs(startMs: Int64, endMs: Int64) -> Int64 {
+        max(0, roundToSecondMs(endMs) - roundToSecondMs(startMs))
+    }
+
+    /// 秒の単位へ四捨五入したミリ秒
+    private static func roundToSecondMs(_ ms: Int64) -> Int64 { (ms + 500) / 1000 * 1000 }
 
     /// 書き出す動画のファイル名「Vlog_yyyy-MM-dd.mp4」（Android: GalleryOutput.buildDisplayName）。
     ///

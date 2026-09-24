@@ -32,6 +32,12 @@ struct TimelineView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
+    /// タイルの位置（タイル一覧の見えている範囲を原点にした座標）。選択が変わったときに、
+    /// そのタイルが見えているかを判断するためだけに覚えておく。
+    /// スクロールのたびに全タイルぶん書き換わるので、画面の再描画を起こさない入れ物に入れる
+    @State private var tileFrames = TileFrames()
+    @State private var clipRowWidth: CGFloat = 0
+
     private var clipRow: some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
@@ -43,6 +49,9 @@ struct TimelineView: View {
                             isMissing: store.missingClipIds.contains(clip.id)
                         )
                             .id(idx)
+                            .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.clipRowSpace)) } action: {
+                                tileFrames.frames[idx] = $0
+                            }
                             // 選んだら止めて頭を出す（同じタイルを選び直したときも。Android: select）
                             .onTapGesture { playerManager.select(index: idx) }
                             // Android版ClipTile: タップ=選択、長押し=ミュート切替（combinedClickable）
@@ -71,11 +80,36 @@ struct TimelineView: View {
                 }
                 .padding(.vertical, 6)
             }
+            .coordinateSpace(.named(Self.clipRowSpace))
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { clipRowWidth = $0 }
+            // 選択中のタイルが常に見えるようにする。連続再生で次へ進んだときや「ひとつ後ろへ移動」で、
+            // タイルが画面外のままになると、いまどれを編集しているのか分からなくなるため。
+            //
+            // すでに全部見えているタイルは動かさない。以前は毎回そのタイルを中央まで送っていたので、
+            // 見えているタイルを押しただけで並びが横に動き、続けて押そうとした指の下のタイルが
+            // 入れ替わっていた（長押しのミュートが別のクリップに効く）。はみ出しているときは、
+            // はみ出した側の端へ寄せるだけにする（Android f12806b）
             .onChange(of: store.selectedIndex) { _, idx in
-                if let idx { withAnimation { proxy.scrollTo(idx, anchor: .center) } }
+                guard let idx else { return }
+                guard let frame = tileFrames.frames[idx], clipRowWidth > 0 else {
+                    withAnimation { proxy.scrollTo(idx, anchor: .center) }
+                    return
+                }
+                if frame.minX < 0 {
+                    withAnimation { proxy.scrollTo(idx, anchor: .leading) }
+                } else if frame.maxX > clipRowWidth {
+                    withAnimation { proxy.scrollTo(idx, anchor: .trailing) }
+                }
             }
         }
     }
+
+    private static let clipRowSpace = "clipRow"
+}
+
+/// タイルの位置の入れ物。@Observableにしない（書き換えても画面を描き直さない）のが要点
+private final class TileFrames {
+    var frames: [Int: CGRect] = [:]
 }
 
 private struct ClipTile: View {
@@ -129,7 +163,8 @@ private struct ClipTile: View {
                     .shadow(radius: 1)
 
                 HStack(spacing: 4) {
-                    Text(durationLabel(clip.trimmedDurationMs))
+                    // 波形の上の範囲の表示（「0:03 〜 0:15（0:12）」）と同じ値にそろえる
+                    Text(durationLabel(Formatters.roundedTrimMs(startMs: clip.startMs, endMs: clip.endMs)))
                         .vlogFont(9, design: .monospaced)
                         .foregroundStyle(.white.opacity(0.8))
                         .shadow(radius: 1)

@@ -49,7 +49,8 @@ final class MyVlogAppUITests: XCTestCase {
     /// 直している。その入口と出口が両方生きていることを見る。
     @MainActor
     func testHitokotoKeyboardOpensOnFirstTapAndCloses() throws {
-        let app = launchApp(clipCount: 0)
+        // クリップが無いとひとこと欄は打てない（打った文字の行き先が無いため）ので、1本入れて起動する
+        let app = launchApp(clipCount: 1)
 
         let textView = app.textViews.firstMatch
         XCTAssertTrue(textView.waitForExistence(timeout: 10), "ひとこと欄が見つからない")
@@ -70,5 +71,50 @@ final class MyVlogAppUITests: XCTestCase {
             "「閉じる」を押してもキーボードが閉じなかった"
         )
         attachScreenshot(app, name: "keyboard_closed")
+    }
+
+    /// クリップが無いとき、ひとこと欄を触ってもキーボードは開かない（打った文字の行き先が無い）
+    @MainActor
+    func testHitokotoIsNotEditableWithoutClips() throws {
+        let app = launchApp(clipCount: 0)
+
+        let textView = app.textViews.firstMatch
+        XCTAssertTrue(textView.waitForExistence(timeout: 10), "ひとこと欄が見つからない")
+        textView.tap()
+
+        XCTAssertFalse(
+            app.keyboards.firstMatch.waitForExistence(timeout: 2),
+            "クリップが無いのにキーボードが開いた"
+        )
+    }
+
+    /// 見えているタイルを押しても、タイムラインは横に動かない。はみ出しているタイルは見える位置まで送る。
+    ///
+    /// 回帰テスト: 選ぶたびにそのタイルを中央まで送っていたので、見えているタイルを押しただけで
+    /// 並びが動き、続けて押そうとした指の下のタイルが入れ替わっていた（Android f12806b）
+    @MainActor
+    func testSelectingAVisibleTileDoesNotScrollTheTimeline() throws {
+        let app = launchApp(clipCount: 8)
+
+        let second = app.buttons["2本目のクリップ"]
+        XCTAssertTrue(second.waitForExistence(timeout: 10))
+        let before = second.frame
+        second.tap()
+        // 選択の反映とスクロールのアニメーションを待つ
+        RunLoop.current.run(until: Date().addingTimeInterval(1))
+        XCTAssertEqual(second.frame.minX, before.minX, accuracy: 1, "見えているタイルを押したら並びが動いた")
+
+        // 画面の右にはみ出しているタイルは、押すと全部見える位置まで送られる
+        let window = app.windows.firstMatch.frame
+        let last = app.buttons["8本目のクリップ"]
+        XCTAssertTrue(last.exists)
+        XCTAssertGreaterThan(last.frame.maxX, window.maxX, "8本目が最初から見えている（テストの前提が崩れた）")
+        // 画面外のタイルは押せないので、見えている端のタイルを順に押して送っていく
+        for index in 3...8 {
+            app.buttons["\(index)本目のクリップ"].tap()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.6))
+        }
+        XCTAssertLessThanOrEqual(last.frame.maxX, window.maxX + 1, "選んだタイルが画面外のまま")
+        attachScreenshot(app, name: "timeline_after_selecting_last")
     }
 }

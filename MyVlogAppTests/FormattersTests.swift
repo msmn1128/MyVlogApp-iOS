@@ -121,6 +121,17 @@ struct FormattersTests {
         #expect(Formatters.durationLabel(ms: 600_000) == "10:00")
     }
 
+    @Test("秒は四捨五入し、範囲の長さは丸めた両端の差にそろえる")
+    func roundsSecondsAndKeepsTheSubtractionConsistent() {
+        // 3.2〜15.1秒（11.9秒）は「0:03 〜 0:15（0:12）」。切り捨てていた頃は（0:11）で引き算が合わなかった
+        #expect(Formatters.durationLabel(ms: 3_200) == "0:03")
+        #expect(Formatters.durationLabel(ms: 15_100) == "0:15")
+        #expect(Formatters.durationLabel(ms: Formatters.roundedTrimMs(startMs: 3_200, endMs: 15_100)) == "0:12")
+        // 3.5〜15.4秒は両端が「0:04 〜 0:15」なので、長さ（11.9秒）を丸めた0:12ではなく0:11
+        #expect(Formatters.durationLabel(ms: Formatters.roundedTrimMs(startMs: 3_500, endMs: 15_400)) == "0:11")
+        #expect(Formatters.durationLabel(ms: 59_600) == "1:00")
+    }
+
     @Test("負の尺でも 0:00 として出す（マイナス表記にしない）")
     func durationLabelNegative() {
         #expect(Formatters.durationLabel(ms: -1_000) == "0:00")
