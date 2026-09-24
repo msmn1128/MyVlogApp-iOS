@@ -29,14 +29,40 @@ import UIKit
 /// 継続（continuation）で結果を受け渡すと昇格が伝わらないので、本番と同じく
 /// utilityのまま最後まで走る。テストを本番の条件へ寄せるための仕掛けであって、
 /// 警告を黙らせるためのごまかしではない。
+///
+/// 切り離したタスクには中止が伝わらないので、待つ側が中止されたら手で伝える（中止のテストのため）
 nonisolated func runAtExportPriority<T: Sendable>(
     _ body: @escaping @Sendable () async throws -> T
 ) async throws -> T {
-    try await withCheckedThrowingContinuation { continuation in
-        Task.detached(priority: .utility) {
-            do { continuation.resume(returning: try await body()) }
-            catch { continuation.resume(throwing: error) }
+    let handle = DetachedHandle()
+    return try await withTaskCancellationHandler {
+        try await withCheckedThrowingContinuation { continuation in
+            handle.set(Task.detached(priority: .utility) {
+                do { continuation.resume(returning: try await body()) }
+                catch { continuation.resume(throwing: error) }
+            })
         }
+    } onCancel: {
+        handle.cancel()
+    }
+}
+
+/// 切り離したタスクへ中止を伝えるための入れ物。タスクを作る前に中止されることもあるので、それも覚えておく
+private nonisolated final class DetachedHandle: @unchecked Sendable {
+    private let lock = NSLock()
+    private var task: Task<Void, Never>?
+    private var cancelled = false
+
+    func set(_ task: Task<Void, Never>) {
+        lock.lock(); defer { lock.unlock() }
+        self.task = task
+        if cancelled { task.cancel() }
+    }
+
+    func cancel() {
+        lock.lock(); defer { lock.unlock() }
+        cancelled = true
+        task?.cancel()
     }
 }
 

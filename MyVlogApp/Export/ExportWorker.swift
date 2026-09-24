@@ -370,6 +370,7 @@ actor ExportWorker {
 
         var insertTime = CMTime.zero
         for url in urls {
+            try Task.checkCancellation()
             let asset   = AVURLAsset(url: url)
             let vTracks = try await asset.loadTracks(withMediaType: .video)
             let aTracks = try await asset.loadTracks(withMediaType: .audio)
@@ -454,48 +455,43 @@ actor ExportWorker {
         guard writer.startWriting() else { throw writer.error ?? ExportError.sessionCreationFailed }
         writer.startSession(atSourceTime: .zero)
 
-        // 映像と音声は、それぞれ書ける分だけ交互に流す。片方だけ先に流し切ろうとすると、
-        // 書き手がもう片方を待って止まり、そのまま進まなくなる
-        await withTaskCancellationHandler {
-            async let video: Void = Self.pump(videoOutput, into: videoInput, label: "video")
-            if let audioOutput, let audioInput {
-                async let audio: Void = Self.pump(audioOutput, into: audioInput, label: "audio")
-                _ = await (video, audio)
-            } else {
-                await video
-            }
-        } onCancel: {
-            reader.cancelReading()
-            writer.cancelWriting()
-        }
-        try Task.checkCancellation()
-        if reader.status == .failed { throw reader.error ?? ExportError.sessionCreationFailed }
-
-        await writer.finishWriting()
-        if let error = writer.error { throw error }
-    }
-
-    /// 読み手から書き手へ、書き手が受け取れるときに流す。読み切ったら（または中止・失敗で読めなく
-    /// なったら）書き手の入口を閉じて戻る
-    private nonisolated static func pump(
-        _ output: AVAssetReaderOutput, into input: AVAssetWriterInput, label: String
-    ) async {
-        nonisolated(unsafe) let output = output
-        nonisolated(unsafe) let input = input
-        let queue = DispatchQueue(label: "com.msmn1128.myvlogapp.merge.\(label)", qos: .utility)
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            var finished = false
-            input.requestMediaDataWhenReady(on: queue) {
-                guard !finished else { return }
-                while input.isReadyForMoreMediaData {
-                    guard let buffer = output.copyNextSampleBuffer(), input.append(buffer) else {
-                        finished = true
-                        input.markAsFinished()
-                        continuation.resume()
-                        return
+        // 映像と音声は、それぞれ書き手が受け取れる分だけ交互に流す。片方だけ先に流し切ろうとすると、
+        // 書き手がもう片方を待って止まり、そのまま進まなくなる。
+        //
+        // 書き手の「受け取れるようになった」の知らせ（requestMediaDataWhenReady）は使わず、
+        // processClip と同じく短く眠って見に行く。知らせを使っていた版では、中止して書き手を
+        // 畳んだあとに知らせを頼むとiOSが例外を投げ、アプリごと落ちていた（結合の始まりで中止したとき。
+        // テストで再現）。書き手が途中で失敗したときも、知らせが来ないまま待ち続けるおそれがあった
+        var pending: [(output: AVAssetReaderOutput, input: AVAssetWriterInput)] = [(videoOutput, videoInput)]
+        if let audioOutput, let audioInput { pending.append((audioOutput, audioInput)) }
+        do {
+            while !pending.isEmpty {
+                try Task.checkCancellation()
+                if writer.status == .failed { throw writer.error ?? ExportError.sessionCreationFailed }
+                var fed = false
+                for index in pending.indices.reversed() {
+                    let (output, input) = pending[index]
+                    while input.isReadyForMoreMediaData {
+                        // 読み切った（読み取りが失敗したときも nil になるので、下で確かめる）
+                        guard let buffer = output.copyNextSampleBuffer() else {
+                            input.markAsFinished()
+                            pending.remove(at: index)
+                            break
+                        }
+                        guard input.append(buffer) else { throw writer.error ?? ExportError.sessionCreationFailed }
+                        fed = true
                     }
                 }
+                if !fed { try await Task.sleep(nanoseconds: 1_000_000) }
             }
+            if reader.status == .failed { throw reader.error ?? ExportError.sessionCreationFailed }
+            await writer.finishWriting()
+            if let error = writer.error { throw error }
+        } catch {
+            // 中止・失敗で抜けるときは読み書きを畳む（畳まないとデコーダとファイルを掴んだまま残る）
+            reader.cancelReading()
+            writer.cancelWriting()
+            throw error
         }
     }
 

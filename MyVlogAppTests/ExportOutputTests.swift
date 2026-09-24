@@ -35,6 +35,11 @@ private nonisolated struct ExportRunner {
         return try await runAtExportPriority { try await worker.createTitleCard(titleText: titleText) }
     }
 
+    func addTitleSfx(to url: URL) async throws -> URL {
+        let worker = self.worker
+        return try await runAtExportPriority { try await worker.addTitleSfx(to: url) }
+    }
+
     func concatenate(urls: [URL]) async throws -> URL {
         let worker = self.worker
         return try await runAtExportPriority { try await worker.concatenate(urls: urls) }
@@ -281,6 +286,34 @@ struct ExportOutputTests {
                 == kCMFormatDescriptionColorPrimaries_ITU_R_709_2 as String)
     }
 
+    @Test("結合の途中で中止しても止まり、中止として戻る", .timeLimit(.minutes(1)))
+    func cancellingTheMergeReturnsPromptly() async throws {
+        // 結合は映像と音声を別々の流し手で書く。中止したときに片方が「書き手が受け取れるようになる」の
+        // 知らせを待ったまま戻らないと、書き出しの画面が消えず、次の書き出しも始められなくなる
+        let voiced = try await TestVideoFactory.makeVideoWithAudio(videoSeconds: 2, audioSeconds: 2, sampleRate: 48_000)
+        var clip = makeClip(source: voiced, endMs: 2_000); clip.durationMs = 2_000
+        let out = try await ExportRunner().processClip(clip, silent: false)
+        defer { TestVideoFactory.remove(voiced, out) }
+
+        // 止まるまでの時間は端末の速さで変わるので、中止する時点をずらして何回か試す。
+        // どの回も（時間の上限までに）戻ること、中止が間に合った回は中止として戻ることを確かめる
+        let urls = Array(repeating: out, count: 60)
+        var cancelledRuns = 0
+        for delayMs in [0, 20, 50, 100, 200, 400] as [UInt64] {
+            let task = Task { try await ExportRunner().concatenate(urls: urls) }
+            try await Task.sleep(nanoseconds: delayMs * 1_000_000)
+            task.cancel()
+            switch await task.result {
+            case .success(let merged):
+                TestVideoFactory.remove(merged)
+            case .failure(let error):
+                #expect(error is CancellationError, "\(delayMs)msで中止したら、中止ではなく失敗として戻った: \(error)")
+                cancelledRuns += 1
+            }
+        }
+        #expect(cancelledRuns > 0, "どの回も中止が間に合わなかった（確かめられていない）")
+    }
+
     @Test("音声の無いクリップのあとのクリップの音は、そのクリップの映像の頭から鳴る")
     func audioStaysAlignedAfterASilentClip() async throws {
         // 1本目は音声なし（1秒）、2本目は頭から鳴る。つないだ動画では、ちょうど1秒の位置から鳴ること。
@@ -367,5 +400,29 @@ struct ExportOutputTests {
         let frame = try await FrameInspector.frame(of: merged, atSeconds: 2.5)
         #expect(FrameInspector.brightPixelCount(frame, in: Region.hitokoto) > 0, "結合後にひとことが消えている")
         #expect(FrameInspector.brightPixelCount(frame, in: Region.timestamp) > 0, "結合後に撮影時刻が消えている")
+    }
+
+    @Test("効果音付きのタイトル（書き出しの既定）とつないでも、タイトル・クリップの映像と効果音がそろう")
+    func concatenationWithTitleSfxKeepsPictureAndSound() async throws {
+        // 書き出しの既定（ミュートしていない）では、タイトルは効果音を足すときに作り直される。
+        // その形のタイトルとつないだときに、映像がどちらも正しく読め、効果音の位置もずれないこと
+        let runner = ExportRunner()
+        let source = try await TestVideoFactory.makeSolidColorVideo(seconds: 1)
+        let title  = try await runner.createTitleCard(titleText: "2026/09/22")
+        let titled = try await runner.addTitleSfx(to: title)
+        let clip   = try await runner.processClip(makeClip(source: source), silent: true)
+        let merged = try await runner.concatenate(urls: [titled, clip])
+        defer { TestVideoFactory.remove(source, title, titled, clip, merged) }
+
+        #expect(titled != title, "効果音を足せていない")
+        let duration = try await FrameInspector.durationSeconds(of: merged)
+        #expect(abs(duration - 3.0) < 0.15, "結合後 \(duration) 秒（3秒のはず）")
+        let titleFrame = try await FrameInspector.frame(of: merged, atSeconds: 0.5)
+        #expect(FrameInspector.brightPixelCount(titleFrame, in: Region.titleLogo) > 0, "タイトルの「Vlog.」が見えない")
+        let clipFrame = try await FrameInspector.frame(of: merged, atSeconds: 2.5)
+        #expect(FrameInspector.brightPixelCount(clipFrame, in: Region.hitokoto) > 0, "タイトルのあとのクリップのひとことが見えない")
+        let onset = try #require(try await TestVideoFactory.audioOnsetSeconds(of: merged), "効果音が鳴っていない")
+        let expected = Double(VlogLayout.titleSfxFrameNumber - 1) / 30.0
+        #expect(abs(onset - expected) <= 0.08, "効果音が \(onset) 秒から鳴った（\(expected) 秒のはず）")
     }
 }
