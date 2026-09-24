@@ -29,10 +29,15 @@ final class ExportManager {
 
     init() {
         // 前回、書き出し中に強制終了していた場合の後始末。結合途中の動画は数GBになりうる。
-        // ExportManagerはアプリ起動時に1つだけ作られ、この時点では書き出しは走っていないので
-        // ここで掃除して問題ない（Android: VlogViewModelのinitでisRunningでないときだけ掃除）。
+        //
+        // 消すのは、この起動より前に作られたファイルだけ。掃除は後回しの優先度で走るので、実際に
+        // 走る頃には書き出しが始まっていることがある。以前は起動時刻を見ていなかったため、
+        // 始まったばかりの書き出しの作業ファイルまで消し、書き出しが「長さを読めない
+        // （-11800 / -17913）」で失敗していた（テストではアプリ起動の直後に書き出すので、
+        // ビルド直後の1回目にまれに起きていた。Android 7c30371 と同じ種類の問題）
+        let launchedAt = Date()
         Task.detached(priority: .background) {
-            ExportWorker.cleanupOrphanedWorkFiles()
+            ExportWorker.cleanupOrphanedWorkFiles(createdBefore: launchedAt)
         }
     }
 

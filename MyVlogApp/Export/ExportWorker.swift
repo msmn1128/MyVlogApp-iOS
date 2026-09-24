@@ -475,18 +475,23 @@ actor ExportWorker {
     /// （Android: VlogExporter.cleanupOrphanedWorkFiles）。
     ///
     /// runExportは成功・失敗どちらの経路でも一時ファイルを消すが、プロセスごと落とされると
-    /// 残る。結合途中の動画は数GBになりうるため、起動時に**書き出しが走っていないときだけ**
-    /// 掃除する（走っている最中に消すと、書き込み中のファイルを消してしまう）。
-    static func cleanupOrphanedWorkFiles() {
+    /// 残る。結合途中の動画は数GBになりうるため、起動時に掃除する。
+    ///
+    /// - Parameter createdBefore: これより前に作られたファイルだけを消す（アプリを起動した時刻を渡す）。
+    ///   いま走っている書き出しのファイルは起動より後に作られるので、掃除が遅れて走っても消さない
+    nonisolated static func cleanupOrphanedWorkFiles(createdBefore: Date) {
         let fm = FileManager.default
         let tempDir = fm.temporaryDirectory
         guard let entries = try? fm.contentsOfDirectory(
-            at: tempDir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+            at: tempDir, includingPropertiesForKeys: [.creationDateKey], options: [.skipsHiddenFiles]
         ) else { return }
 
         for url in entries where url.pathExtension == "mov" || url.pathExtension == "mp4" {
             let name = url.lastPathComponent
             guard workFilePrefixes.contains(where: { name.hasPrefix($0) }) else { continue }
+            // 作成日時が読めないファイルは、今回の書き出しのものかもしれないので消さない
+            guard let createdAt = try? url.resourceValues(forKeys: [.creationDateKey]).creationDate,
+                  createdAt < createdBefore else { continue }
             try? fm.removeItem(at: url)
         }
     }

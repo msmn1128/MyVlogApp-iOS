@@ -55,4 +55,24 @@ struct ExportSpaceTests {
         #expect(ExportManager.failureMessage(for: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOSPC)))
                 == ExportSpace.ranOutOfSpaceMessage)
     }
+
+    @Test("起動時の後始末は、起動より前の作業ファイルだけを消し、始まったばかりの書き出しのファイルは残す")
+    func cleanupKeepsFilesOfTheCurrentExport() throws {
+        // 回帰テスト: 後始末は後回しの優先度で走るので、走る頃には書き出しが始まっていることがあり、
+        // その作業ファイルまで消して書き出しを失敗させていた
+        let tmp = FileManager.default.temporaryDirectory
+        let old = tmp.appendingPathComponent("clipvideo_cleanuptest_old_\(UUID().uuidString).mov")
+        let current = tmp.appendingPathComponent("clipvideo_cleanuptest_new_\(UUID().uuidString).mov")
+        defer { try? FileManager.default.removeItem(at: old); try? FileManager.default.removeItem(at: current) }
+        // 前回の起動で残ったファイル → 起動 → いまの書き出しが作ったファイル、の順
+        try Data([0]).write(to: old)
+        try FileManager.default.setAttributes([.creationDate: Date().addingTimeInterval(-3600)], ofItemAtPath: old.path)
+        let launchedAt = Date()
+        try Data([0]).write(to: current)
+
+        ExportWorker.cleanupOrphanedWorkFiles(createdBefore: launchedAt)
+
+        #expect(!FileManager.default.fileExists(atPath: old.path), "前回の残骸が消えていない")
+        #expect(FileManager.default.fileExists(atPath: current.path), "いまの書き出しの作業ファイルを消した")
+    }
 }
