@@ -26,6 +26,14 @@ final class VideoPlayerManager {
     @ObservationIgnored nonisolated(unsafe) private var boundaryObserver: Any?
     @ObservationIgnored private var endNoteObserver: NSObjectProtocol?
     @ObservationIgnored private var loadTask: Task<Void, Never>?
+    /// AVPlayerの再生速度の監視。電話・ほかのアプリの音・イヤホンを抜いたときなど、
+    /// こちらがpause()を呼ばずに止まったときも`isPlaying`を合わせるため
+    @ObservationIgnored private var rateObservation: NSKeyValueObservation?
+    /// 読み込んだAVPlayerItemの状態の監視。読めない動画（移動・削除された、アクセスできない）を知らせるため
+    @ObservationIgnored private var itemStatusObservation: NSKeyValueObservation?
+    /// 直前に再生できなかったクリップ。同じ動画で続けて失敗したときに知らせ直さないため
+    /// （選んだときと再生を押したときの両方で失敗するので、そのままだと同じ知らせが続けて出る）
+    @ObservationIgnored private var lastErrorClipId: UUID?
 
     @ObservationIgnored weak var store: VlogStore?
 
@@ -70,6 +78,18 @@ final class VideoPlayerManager {
                 self.currentTimeMs = ms
             }
         }
+        // 再生・一時停止は自分で`isPlaying`を立て下ろししているが、AVPlayerは割り込み
+        // （電話・ほかのアプリの音・イヤホンを抜く）でも止まる。そのとき`isPlaying`がtrueのまま残り、
+        // 次のタップが「一時停止」扱いになって1回空振りしていた。実際の速度に合わせ直す
+        // （Android: onIsPlayingChanged）。値は通知の中ではなく、メインへ移ってから読み直す
+        // （古い通知が後から届いて、いまの状態を上書きしないように）
+        rateObservation = player.observe(\.rate, options: [.new]) { [weak self] _, _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let playing = self.player.rate != 0
+                if self.isPlaying != playing { self.isPlaying = playing }
+            }
+        }
     }
 
     deinit {
@@ -82,6 +102,7 @@ final class VideoPlayerManager {
 
     func reset() {
         loadTask?.cancel()
+        itemStatusObservation = nil
         pause()
         removeBoundaryObserver()
         removeEndObserver()
@@ -97,6 +118,10 @@ final class VideoPlayerManager {
         loadTask?.cancel()
         let autoPlay = shouldAutoPlayNext
         shouldAutoPlayNext = false
+        // 連続再生で次へ進むとき以外（タイルを選んだ・削除した・もとに戻した・一時保存を読み出した）は
+        // 止めてから頭を出す（Android: select → seekAndPause）。止めないと、再生中に別のタイルを
+        // 選んだとき、AVPlayerの速度が残ったまま新しいクリップが勝手に流れ始めていた
+        if !autoPlay { pause() }
         loadTask = Task { await doLoad(clip, autoPlay: autoPlay) }
     }
 
@@ -111,6 +136,7 @@ final class VideoPlayerManager {
             let asset = try await AssetLoader.shared.load(clip: clip, forPreview: true)
             guard !Task.isCancelled else { isLoading = false; return }
             let item = AVPlayerItem(asset: asset)
+            observeFailure(of: item, clip: clip)
             player.replaceCurrentItem(with: item)
             applyMuteState(for: clip)
             seek(to: clip.startMs)
@@ -120,9 +146,63 @@ final class VideoPlayerManager {
                 play()
             }
         } catch {
-            print("[VideoPlayerManager] \(error)")
+            // フォトライブラリに見つからない・アクセスできない動画はここへ来る
+            if !Task.isCancelled { reportPlaybackError(clip: clip) }
         }
         isLoading = false
+    }
+
+    // MARK: - 再生できない動画
+
+    /// 読み込んだ動画が再生できないと分かったら知らせる（ファイルは開けても中身が読めない場合など）
+    private func observeFailure(of item: AVPlayerItem, clip: VlogClip) {
+        itemStatusObservation = item.observe(\.status, options: [.new]) { [weak self] item, _ in
+            let status = item.status
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                switch status {
+                case .failed:      self.reportPlaybackError(clip: clip)
+                // 読み込めたら、次に同じ動画で失敗したときはまた知らせる
+                case .readyToPlay: if self.lastErrorClipId == clip.id { self.lastErrorClipId = nil }
+                default:           break
+                }
+            }
+        }
+    }
+
+    /// 再生できなかったことを知らせ、開けない動画の目印を更新する（Android: onPlayerError）。
+    /// 以前は開発用のログに出すだけで、プレビューが黒いまま何も起きず、理由が分からなかった
+    private func reportPlaybackError(clip: VlogClip) {
+        guard lastErrorClipId != clip.id else { return }
+        lastErrorClipId = clip.id
+        isLoading = false
+        store?.showMessage("この動画を再生できませんでした（移動・削除されたか、アクセス権限が取り消されています）")
+        store?.refreshMissingClips()
+    }
+
+    // MARK: - 選択・編集に合わせた頭出し
+
+    /// タイルを選んだとき（Android: select）。止めて、そのクリップの頭（トリム開始）を出す。
+    ///
+    /// 選び直したのが同じクリップのときも頭へ戻す。別のクリップなら、選択の変化を見ている
+    /// ContentViewがloadClipを呼び、そちらで止めて頭を出す。
+    func select(index: Int) {
+        guard let store, store.clips.indices.contains(index) else { return }
+        let sameClip = store.selectedIndex == index
+        pause()
+        // 同じ動画を選び直したら、失敗の知らせももう一度出してよい（再生できないまま気付けないので）
+        lastErrorClipId = nil
+        store.selectedIndex = index
+        if sameClip { seek(to: store.clips[index].startMs) }
+    }
+
+    /// もとに戻す・やり直す・トリムのプリセットのあと（Android: applySnapshot / updateTrim）。
+    /// 止めて、選択中のクリップの頭（トリム開始）を出す。再生したまま範囲や中身が変わると、
+    /// どこが変わったのか画面から確かめられないため
+    func showSelectedClipStart() {
+        pause()
+        guard let clip = store?.selectedClip else { return }
+        seek(to: clip.startMs)
     }
 
     // MARK: - Mute

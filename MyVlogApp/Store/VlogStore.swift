@@ -29,6 +29,11 @@ final class VlogStore {
     /// 一時保存の保存・読み出しを断る判断にも使う（Android: VlogViewModel.isAdding）。
     /// 以前はContentViewの@Stateだったため、SavedProjectsViewからは見えなかった。
     var isImporting: Bool = false
+    /// 動画を開けなくなったクリップのid（移動・削除された、写真へのアクセスが取り消されたなど）。
+    /// タイムラインのタイルに目印を出すのに使う（Android: VlogViewModel.missingClipIds）。
+    /// 起動時の復元では開けない動画は落とすが、使っている間に消された動画はタイムラインに
+    /// 残ったままで、どれが消えたのか見分けられなかった
+    var missingClipIds: Set<UUID> = []
 
     // MARK: Undo / Redo（実体の操作はVlogStore+History.swift）
     var undoStack: [UndoEntry] = []

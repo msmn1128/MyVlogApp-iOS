@@ -68,17 +68,27 @@ struct OperationBar: View {
                 divider
 
                 CompactIconButton(systemImage: "arrow.uturn.backward", contentDescription: "もとに戻す",
-                                   enabled: store.canUndo) { store.undo() }
+                                   enabled: store.canUndo) {
+                    store.undo()
+                    // 止めて、選択中のクリップの頭を出す（Android: applySnapshot）
+                    playerManager.showSelectedClipStart()
+                }
                 CompactIconButton(systemImage: "arrow.uturn.forward", contentDescription: "やり直す",
-                                   enabled: store.canRedo) { store.redo() }
+                                   enabled: store.canRedo) {
+                    store.redo()
+                    playerManager.showSelectedClipStart()
+                }
 
                 divider
 
                 TrimPresetButton(label: "2s", enabled: trimPresetEnabled) {
                     store.applyTrimPreset(lengthMs: 2_000)
+                    // 止めて選び直した範囲の頭を出す（Android: updateTrim → seekAndPause）
+                    playerManager.showSelectedClipStart()
                 }
                 TrimPresetButton(label: "4s", enabled: trimPresetEnabled) {
                     store.applyTrimPreset(lengthMs: 4_000)
+                    playerManager.showSelectedClipStart()
                 }
 
                 divider

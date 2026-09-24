@@ -141,6 +141,16 @@ extension VlogStore {
         return (loaded, excluded)
     }
 
+    /// タイムラインの全クリップについて、動画が今も開けるかを確かめ直す（Android: refreshMissingClips）。
+    /// アプリが前面に戻ったとき・再生できなかったとき・書き出しが終わったときに呼ぶ。
+    /// 判定は復元と同じ（ファイルがあるか・フォトライブラリにあるか）で、まとめて1回で引くので軽い。
+    func refreshMissingClips() {
+        let (readable, _) = validClips(from: clips)
+        let readableIds = Set(readable.map(\.id))
+        let missing = Set(clips.map(\.id).filter { !readableIds.contains($0) })
+        if missing != missingClipIds { missingClipIds = missing }
+    }
+
     /// 渡した識別子のうち、いまもフォトライブラリに実在するものだけを返す（1回のfetchで済ませる）
     private static func existingAssetIdentifiers(among identifiers: [String]) -> Set<String> {
         guard !identifiers.isEmpty else { return [] }

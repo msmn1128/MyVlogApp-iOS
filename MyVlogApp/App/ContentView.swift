@@ -145,6 +145,11 @@ struct ContentView: View {
         .onChange(of: store.timelineMuted) {
             playerManager.applyMuteState(for: store.selectedClip)
         }
+        // 書き出しが終わったら、動画が開けるかを確かめ直す。開けない動画が混ざっていて
+        // 書き出しが断られたとき、どのタイルを外せばよいかを目印で示すため（Android: VlogViewModel）
+        .onChange(of: exportManager.isExporting) { _, exporting in
+            if !exporting { store.refreshMissingClips() }
+        }
         // キーボード表示中はタイムライン:ひとことの比率をAndroid版のimeVisible分岐に合わせて変える。
         //
         // 以前は縦画面で「ひとこと」にフォーカス中はプレビュー・タイムラインを丸ごと隠して

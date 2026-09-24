@@ -24,6 +24,12 @@ extension WaveformView {
             lockedViewport = effectiveViewport(clip: clip)
             playerManager.beginInteractiveSeek()
             drag = beginDrag(at: value.startLocation.x, w: w, clip: clip, leftX: leftX, rightX: rightX)
+            // つまみ・区切りを掴んだら止める。再生したまま端を動かすと、映像が流れていって
+            // 切れ目を確かめられない（Android: updateTrim / moveSplit → seekAndPause）
+            switch drag {
+            case .trimLeft, .trimRight, .splitMove: playerManager.pause()
+            default: break
+            }
             if case .pendingBody(let downX) = drag {
                 schedulePendingBodyTimeout(downX: downX, w: w)
             }

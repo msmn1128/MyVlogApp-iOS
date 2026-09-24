@@ -768,6 +768,24 @@ struct VlogStoreProjectsTests {
         #expect(!second.timelineMuted)
     }
 
+    @Test("使っている間に消された動画は、確かめ直すと目印の対象になる")
+    func missingClipsAreMarked() throws {
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("missing-\(UUID().uuidString).mov")
+        try Data([0x00]).write(to: file)
+        let store = makeStore()
+        var clip = TestClip.make()
+        clip.fileURL = file
+        store.addClips([clip])
+
+        store.refreshMissingClips()
+        #expect(store.missingClipIds.isEmpty)
+
+        try FileManager.default.removeItem(at: file)
+        store.refreshMissingClips()
+        #expect(store.missingClipIds == [store.clips[0].id])
+    }
+
     @Test("読み出しは「もとに戻す」で読み出す前へ戻せる")
     func loadIsUndoable() {
         let store = makeStore()

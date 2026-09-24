@@ -53,6 +53,11 @@ struct MyVlogAppApp: App {
             if phase == .background {
                 store.flushAutoSave()
             }
+            // 前面に戻ったら、動画が開けるかを確かめ直す。背面にいる間に写真アプリなどで動画を
+            // 消された・アクセスを取り消された場合に、タイルの目印で気付けるように（Android: ON_START）
+            if phase == .active {
+                store.refreshMissingClips()
+            }
         }
     }
 }

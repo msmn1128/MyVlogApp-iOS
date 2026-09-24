@@ -37,11 +37,14 @@ struct TimelineView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(Array(store.clips.enumerated()), id: \.element.id) { idx, clip in
-                        ClipTile(clip: clip, isSelected: idx == store.selectedIndex)
+                        ClipTile(
+                            clip: clip,
+                            isSelected: idx == store.selectedIndex,
+                            isMissing: store.missingClipIds.contains(clip.id)
+                        )
                             .id(idx)
-                            .onTapGesture {
-                                store.selectedIndex = idx
-                            }
+                            // 選んだら止めて頭を出す（同じタイルを選び直したときも。Android: select）
+                            .onTapGesture { playerManager.select(index: idx) }
                             // Android版ClipTile: タップ=選択、長押し=ミュート切替（combinedClickable）
                             .onLongPressGesture(minimumDuration: 0.5) {
                                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -51,11 +54,15 @@ struct TimelineView: View {
                             .accessibilityElement(children: .combine)
                             // 枠線の太さでしか示していない選択状態を、読み上げにも乗せる。
                             // 何本目かも言わないと、どのクリップを触っているのか分からない
-                            .accessibilityLabel("\(idx + 1)本目のクリップ")
+                            .accessibilityLabel(
+                                store.missingClipIds.contains(clip.id)
+                                    ? "\(idx + 1)本目のクリップ。動画が見つかりません（移動・削除されたか、アクセス権限が取り消されています）"
+                                    : "\(idx + 1)本目のクリップ"
+                            )
                             .accessibilityAddTraits(
                                 idx == store.selectedIndex ? [.isButton, .isSelected] : [.isButton]
                             )
-                            .accessibilityAction { store.selectedIndex = idx }
+                            .accessibilityAction { playerManager.select(index: idx) }
                             .accessibilityAction(named: clip.isMuted ? "ミュートを解除" : "ミュート") {
                                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                                 store.toggleMute(at: idx)
@@ -74,6 +81,9 @@ struct TimelineView: View {
 private struct ClipTile: View {
     let clip:       VlogClip
     let isSelected: Bool
+    /// 動画を開けなくなった（移動・削除された、アクセスが取り消された）か。枠を赤くして警告の目印を出す。
+    /// 再生と書き出しでも知らせるが、タイルを見ただけでどれを外せばよいか分かるようにする（Android: ClipTile）
+    let isMissing:  Bool
 
     /// タイルの大きさ。中に撮影時刻・ひとこと・尺の3行を抱えるので、文字サイズ設定に
     /// 合わせて一緒に伸ばす（固定のままだと大きい文字設定で3行が収まらず切れる）
@@ -131,6 +141,11 @@ private struct ClipTile: View {
                             .vlogFont(9)
                             .foregroundStyle(.white.opacity(0.8))
                     }
+                    if isMissing {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .vlogFont(9)
+                            .foregroundStyle(AppColors.error(colorScheme))
+                    }
                 }
             }
             .padding(5)
@@ -163,13 +178,15 @@ private struct ClipTile: View {
         .overlay(
             RoundedRectangle(cornerRadius: 8)
                 .strokeBorder(
-                    isSelected ? AppColors.primary : AppColors.primary.opacity(0.25),
-                    lineWidth: isSelected ? 2.5 : 1
+                    isMissing ? AppColors.error(colorScheme)
+                        : isSelected ? AppColors.primary : AppColors.primary.opacity(0.25),
+                    lineWidth: isSelected || isMissing ? 2.5 : 1
                 )
         )
         // 選択状態の切り替わりで枠線が一瞬で変わらず、じわっと変化するようにする
         // （Android版ClipTileのanimateColorAsStateと同じ狙い）
         .animation(.default, value: isSelected)
+        .animation(.default, value: isMissing)
         .transition(.opacity)
         .task(id: clip.id) { await loadThumbnail() }
     }

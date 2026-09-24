@@ -224,7 +224,9 @@ struct WaveformView: View {
         let newStart = adjustedTrimStartMs(clip: clip, deltaMs: deltaMs)
         guard newStart != clip.startMs else { return }
         store.updateTrim(startMs: newStart, endMs: clip.endMs)
-        // 終端の監視の張り直しはContentViewがtrimBoundsのonChangeで面倒を見る
+        // 終端の監視の張り直しはContentViewがtrimBoundsのonChangeで面倒を見る。
+        // 指で動かすときと同じく止めて、動かした端のコマを出す
+        playerManager.pause()
         playerManager.seek(to: newStart)
     }
 
@@ -233,6 +235,7 @@ struct WaveformView: View {
         let newEnd = adjustedTrimEndMs(clip: clip, deltaMs: deltaMs)
         guard newEnd != clip.endMs else { return }
         store.updateTrim(startMs: clip.startMs, endMs: newEnd)
+        playerManager.pause()
         playerManager.seek(to: newEnd)
     }
 
