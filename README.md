@@ -1,7 +1,6 @@
 # MyVlog.（iOS）
 
 撮った動画を並べて、ひとことと撮影時刻を焼き込み、1本のVLOGとして書き出すiOSアプリ。
-同じ仕様の Android 版は [msmn1128/MyVlogApp](https://github.com/msmn1128/MyVlogApp) にある。
 
 - バンドルID: `com.msmn1128.myvlogapp`
 - iOS 17 以降、SwiftUI・AVFoundation（プレビューも書き出しも OS の機能だけで行い、外部ライブラリは使わない）
@@ -42,7 +41,7 @@ xcodebuild test -project MyVlogApp.xcodeproj -scheme MyVlogApp \
 ## ライセンス
 
 - **このリポジトリのソースコード**：MIT ライセンス（[LICENSE](./LICENSE)）。
-  Android 版と違い FFmpeg を使っていないので、アプリも MIT のまま配布できる。
+  FFmpeg などの GPL のライブラリを使っていないので、アプリも MIT のまま配布できる。
 - 同梱の素材（`MyVlogApp/Resources/fonts/`・`sfx/`）はそれぞれの配布元のライセンスに従う。
   アプリ内の「ライセンス」（「編集内容の保存」ダイアログから開く）にも、フォントの著作権表示を載せている。
   - M PLUS U（`MPLUSU-Regular.ttf`）：Copyright 2025 The M+ FONTS Project Authors。[SIL Open Font License 1.1](https://openfontlicense.org)
