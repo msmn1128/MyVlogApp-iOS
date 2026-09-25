@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit.UIGestureRecognizerSubclass
 import UIKit
 
 struct TextInputView: View {
@@ -287,12 +288,80 @@ struct NativeTextView: UIViewRepresentable {
 /// 実機（特にiPad）で「1回目タップでキーボードが開かない」症状を引き起こすが、
 /// touchesBegan時点では既にhitTestがこのビューを選択しているため、ここで
 /// becomeFirstResponder()を呼べば確実かつ即座にキーボードが表示される。
-final class EagerFirstResponderTextView: UITextView {
+final class EagerFirstResponderTextView: UITextView, UIGestureRecognizerDelegate {
+    /// いまのタップで、カーソルを文字の終わりへ置き直すか（理由は handleTap）
+    private var moveCaretToEndAfterTap = false
+
+    override init(frame: CGRect, textContainer: NSTextContainer?) {
+        super.init(frame: frame, textContainer: textContainer)
+        // 指を置いた瞬間に見る。指を離すころには入力がもう始まっていて、入力を始めるタップだったかが分からない
+        let touchDown = TouchDownRecognizer { [weak self] point in
+            guard let self else { return }
+            // 入力を始めるタップか、入力中に文字（最後の行）より下をタップしたか
+            self.moveCaretToEndAfterTap = !self.isFirstResponder
+                || point.y > self.caretRect(for: self.endOfDocument).maxY
+        }
+        addGestureRecognizer(touchDown)
+        // タップが終わったら（UIKitがカーソルを置いたあと）置き直す。UITextView自身のタップの処理を
+        // 妨げないよう、同時に認識させ、タッチも横取りしない
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
+        tap.cancelsTouchesInView = false
+        tap.delegate = self
+        addGestureRecognizer(tap)
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool { true }
+
+    /// 入力を始めるタップと、入力中に文字の下の空いている所をタップしたときは、カーソルを文字の終わりに置く。
+    ///
+    /// 中央ぞろえのUITextViewは、入力を始めるタップでカーソルを先頭に置くことがある（UIテストで確認。
+    /// 文字の下をタップしても先頭になる）。そのため2回目からは、打った文字が頭に入っていた
+    /// （「A1」のあとにタップして打つと「B2A1」）。ひとことは短い文言で、書き足すことが多いので終わりに置く。
+    /// 途中を直したいときは、入力が始まってからもう一度タップすれば、その位置に置ける。
+    ///
+    /// どちらのタップかは、指を置いた瞬間に見る（TouchDownRecognizer）。置き直すのは、UIKitがタップを
+    /// 処理してカーソルを置いたあと（次の周回）。touchesBegan/Endedは使えない（タップはUITextView自身の
+    /// 文字入力の仕組みが受け取り、ここまで届かない。UIテストで確認）
+    @objc private func handleTap() {
+        guard moveCaretToEndAfterTap else { return }
+        moveCaretToEndAfterTap = false
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isFirstResponder, self.selectedTextRange?.isEmpty ?? true else { return }
+            let end = self.endOfDocument
+            self.selectedTextRange = self.textRange(from: end, to: end)
+        }
+    }
+
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesBegan(touches, with: event)
         // 打たせないとき（クリップが無い・書き出し中）はキーボードを出さない
         if isEditable, !isFirstResponder {
             _ = becomeFirstResponder()
         }
+    }
+}
+
+/// 指を置いた瞬間の位置を知らせるだけの認識器。知らせたらすぐ失敗して、ほかの認識器を妨げない
+private final class TouchDownRecognizer: UIGestureRecognizer {
+    private let onTouchDown: (CGPoint) -> Void
+
+    init(onTouchDown: @escaping (CGPoint) -> Void) {
+        self.onTouchDown = onTouchDown
+        super.init(target: nil, action: nil)
+        cancelsTouchesInView = false
+        delaysTouchesBegan = false
+        delaysTouchesEnded = false
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        if let touch = touches.first, let view { onTouchDown(touch.location(in: view)) }
+        state = .failed
     }
 }

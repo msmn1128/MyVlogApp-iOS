@@ -297,6 +297,21 @@ struct VlogStoreEditingTests {
         #expect(store.selectedClip?.texts.map(\.startMs) == [0, 400, 4_400])
     }
 
+    @Test("区間ごと移動で、尺の位置の区切りは動画の終わりに付いたまま動かない")
+    func moveTrimLeavesTheSplitAtTheEnd() {
+        let store = makeStore()
+        var clip = photoClip("a")   // 尺10秒
+        clip.startMs = 2_000
+        clip.endMs = 5_000
+        clip.texts = TestClip.segments([(0, "A"), (3_000, "B"), (10_000, "C")])
+        store.addClips([clip])
+
+        let moved = store.moveTrim(targetStartMs: 4_000)
+
+        #expect(moved?.startMs == 4_000)
+        #expect(store.selectedClip?.texts.map(\.startMs) == [0, 5_000, 10_000])
+    }
+
     @Test("区間ごと移動でも、トリムの幅は変わらない")
     func moveTrimKeepsSpan() {
         let store = storeWithSplitClip()

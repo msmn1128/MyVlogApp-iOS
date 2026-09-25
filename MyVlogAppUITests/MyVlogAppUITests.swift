@@ -148,13 +148,31 @@ final class MyVlogAppUITests: XCTestCase {
             app.buttons["keyboardDone"].tap()
             XCTAssertTrue(waitUntil(timeout: 3) { !app.keyboards.firstMatch.exists })
         }
-        // どこに入るかは、タップした位置のカーソルで決まるので見ない。見るのは、打った語が
+        // どこに入るかは testTappingToStartTypingAppendsAtTheEnd で見る。ここで見るのは、打った語が
         // 1文字も欠けずに全部あること
         let value = textView.value as? String ?? ""
         for word in words {
             XCTAssertTrue(value.contains(word), "「\(word)」が欠けている（\(value)）")
         }
         XCTAssertEqual(value.count, words.joined().count, "余分な文字か、欠けた文字がある（\(value)）")
+    }
+
+    /// 入力欄をタップして打つと、文字の終わりに入る。
+    ///
+    /// 回帰テスト: 中央ぞろえの入力欄では、UIKitが入力を始めるタップでカーソルを先頭に置くことがあり、
+    /// 2回目からは打った文字が頭に入っていた（「A1」→「B2A1」）
+    @MainActor
+    func testTappingToStartTypingAppendsAtTheEnd() throws {
+        let app = launchApp(clipCount: 1)
+        let textView = app.textViews.firstMatch
+        for word in ["A1", "B2", "C3"] {
+            textView.tap()
+            XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+            app.typeText(word)
+            app.buttons["keyboardDone"].tap()
+            XCTAssertTrue(waitUntil(timeout: 3) { !app.keyboards.firstMatch.exists })
+        }
+        XCTAssertEqual(textView.value as? String, "A1B2C3", "文字の下をタップして打った文字が終わりに入らない")
     }
 
     /// キーボードを出したまま「もとに戻す」を押すと、入力欄も戻り、続けて打っても戻した内容を打ち消さない。

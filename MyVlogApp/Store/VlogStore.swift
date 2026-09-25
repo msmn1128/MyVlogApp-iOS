@@ -306,10 +306,10 @@ final class VlogStore {
         updateSelected(tag: "trimMove:\(selectedIndex ?? -1)") { c in
             c.startMs = newStart
             c.endMs   = newEnd
-            // 先頭の区間は常に絶対位置0（動画そのものの頭）なので動かさない。それ以外はすべて
-            // 同じdeltaで動く。はみ出さない量まで詰めてあるので、ここで個別に丸める必要はない
+            // 先頭の区間（絶対位置0＝動画の頭）と尺の位置の区切り（動画の終わり）は動かさない（isPinned）。
+            // それ以外はすべて同じdeltaで動く。はみ出さない量まで詰めてあるので、ここで個別に丸める必要はない
             c.texts = c.texts.map { seg in
-                guard seg.startMs != 0 else { return seg }
+                guard !seg.isPinned(durationMs: c.durationMs) else { return seg }
                 var s = seg
                 s.startMs = seg.startMs + delta
                 return s

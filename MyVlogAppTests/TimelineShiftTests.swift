@@ -35,19 +35,28 @@ struct TimelineShiftTests {
         #expect(moved[2] - moved[1] == 4_000)
     }
 
-    @Test("右へ大きく動かしても、いちばん後ろの区切りが尺を越えないところで止まる")
+    @Test("右へ大きく動かしても、最後の区間に最短の長さ（400ms）を残すところで止まる")
     func clampsRight() {
+        // 尺ちょうどまで行けた頃は、着いた区切りが尺の位置の（動かない）区切りに変わってしまった
         let texts = TestClip.segments([(0, "A"), (1_000, "B"), (5_000, "C")])
         let delta = clampTimelineShift(texts: texts, requested: 9_000, durationMs: 10_000)
-        #expect(delta == 5_000)   // 5000 + 5000 = 10000（尺ちょうど）
+        #expect(delta == 4_600)   // 5000 + 4600 = 9600（尺の400ms手前）
     }
 
-    @Test("すでに範囲外の保存データでも、動かせなくはしない（許容範囲に0を含める）")
+    @Test("尺の位置の区切りは動かさないので、あっても後ろへ動かせる")
+    func splitAtTheEndDoesNotBlockMovingRight() {
+        // 回帰テスト: 保存データの尺より後ろの区切りは、復元時に尺の位置へ集められる（長さ0で表示されない）。
+        // それも動く区切りに数えていた頃は、後ろへずらせる量が0になっていた（Android 9e004c5）
+        let texts = TestClip.segments([(0, "A"), (1_000, "B"), (5_000, "C"), (10_000, "D")])
+        #expect(clampTimelineShift(texts: texts, requested: 3_000, durationMs: 10_000) == 3_000)
+        #expect(clampTimelineShift(texts: texts, requested: 9_000, durationMs: 10_000) == 4_600)
+    }
+
+    @Test("すでに範囲外の保存データでも、逆向きへは飛ばさない（許容範囲に0を含める）")
     func alreadyOutOfRange() {
-        // 尺を越えた位置に区切りが残っている壊れたデータ。hi は max(...,0) で0になる
-        let texts = TestClip.segments([(0, "A"), (12_000, "B")])
-        #expect(clampTimelineShift(texts: texts, requested: 1_000, durationMs: 10_000) == 0)
-        // 左へは動かせる（下限は 400 - 12000 = -11600）
-        #expect(clampTimelineShift(texts: texts, requested: -1_000, durationMs: 10_000) == -1_000)
+        // すでに下限（400）を割っている区切り。0を含めていないと、左へ動かそうとして右へ飛ぶ
+        let texts = TestClip.segments([(0, "A"), (100, "B")])
+        #expect(clampTimelineShift(texts: texts, requested: -500, durationMs: 10_000) == 0)
+        #expect(clampTimelineShift(texts: texts, requested: 500, durationMs: 10_000) == 500)
     }
 }

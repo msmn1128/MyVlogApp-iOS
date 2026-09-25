@@ -398,21 +398,35 @@ nonisolated func adjustedTrimEndMs(clip: VlogClip, deltaMs: Int64) -> Int64 {
 /// 復元できなくなっていた。代わりに、全部が同じ量で動けるところまで`requested`自体を詰める
 /// （Android: VlogModels.kt clampTimelineShift）。
 ///
-/// 先頭の区間（`startMs == 0`）は動画そのものの頭なので動かさない。よって他の区切りの下限は
-/// `TextSegment.minSegmentMs`、上限は動画の尺。すでにその範囲を外れている保存データを
+/// 先頭の区間（`startMs == 0`）は動画そのものの頭なので動かさない。尺の位置の区切り（保存データの
+/// 尺より後ろの区切りを復元時に集めたもの。長さ0で表示されない）も、同じく動画の終わりに付いたものとして
+/// 動かさない（`isPinned`）。以前はこれも動く区切りに数えていたので、後ろへずらせる量が0になり、
+/// そういう区切りが1つあるだけで範囲ごと後ろへ動かせなかった（Android 9e004c5）。
+///
+/// 動く区切りの下限は`TextSegment.minSegmentMs`、上限は動画の尺の`minSegmentMs`手前（前後で同じ扱い。
+/// 最後の区間も読む前に消えないだけの長さを残す）。以前は尺ちょうどまで行けたため、動かした区切りが
+/// 尺の位置に着くと、そこで動かない区切りに変わってしまう。すでにその範囲を外れている保存データを
 /// 動かせなくしてしまわないよう、許容範囲には必ず0（＝動かさない）を含める。
 ///
 /// - Parameter requested: トリム開始位置の移動量（動画の範囲へクランプ済み）
 /// - Returns: 実際にずらす量
 nonisolated func clampTimelineShift(texts: [TextSegment], requested: Int64, durationMs: Int64) -> Int64 {
-    // 移動の対象になるのは、先頭（絶対位置0）以外の区切りだけ
-    let moving = texts.filter { $0.startMs != 0 }
+    // 移動の対象になるのは、先頭（絶対位置0）と尺の位置以外の区切りだけ
+    let moving = texts.filter { !$0.isPinned(durationMs: durationMs) }
     guard let lowest = moving.map(\.startMs).min(),
           let highest = moving.map(\.startMs).max() else { return requested }
 
     let lo = min(TextSegment.minSegmentMs - lowest, 0)
-    let hi = max(durationMs - highest, 0)
+    let hi = max(durationMs - TextSegment.minSegmentMs - highest, 0)
     return min(max(requested, lo), hi)
+}
+
+extension TextSegment {
+    /// 区間ごと移動（clampTimelineShift・VlogStore.moveTrim）で動かさない区切りか。
+    /// 先頭（絶対位置0＝動画の頭）と、尺の位置（動画の終わり。尺が分からないときは見ない）
+    nonisolated func isPinned(durationMs: Int64) -> Bool {
+        startMs == 0 || (durationMs > 0 && startMs >= durationMs)
+    }
 }
 
 struct SavedProject: Codable, Identifiable {
