@@ -246,6 +246,13 @@ extension WaveformView {
             panViewportIfNeeded(around: result.startMs, clip: clip)
             panViewportIfNeeded(around: result.endMs, clip: clip)
             playerManager.updateTrimBounds(startMs: result.startMs, endMs: result.endMs)
+            // プレビューも範囲と同じだけ動かす（指で動かしているとき＝dragMoveTrimは指の下のコマを出す）。
+            // 合わせていなかった頃は、指を端で止めて範囲が流れている間、プレビューは流れ始める前のコマのまま
+            // だった（つまみの側＝advanceEdgeScrollTrimHandleで直したのと同じ食い違い）
+            let delta = result.startMs - clip.startMs
+            if delta != 0 {
+                playerManager.seek(to: max(result.startMs, min(result.endMs, playerManager.currentTimeMs + delta)))
+            }
         }
     }
 

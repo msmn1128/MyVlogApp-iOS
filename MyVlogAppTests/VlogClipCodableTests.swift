@@ -89,8 +89,48 @@ struct VlogClipCodableTests {
             ["startMs": -3, "text": "B"],
             ["startMs": 1_000, "text": "C"]
         ]))
-        #expect(clip.texts.map(\.startMs) == [0, 0, 1_000])
-        #expect(clip.texts.map(\.text) == ["A", "B", "C"])
+        let starts = clip.texts.map(\.startMs)
+        #expect(starts == starts.sorted())
+        #expect(starts.first == 0)
+    }
+
+    @Test("同じ位置の区間は1つにまとめ、それまで画面に出ていた後ろの方を残す")
+    func mergesSegmentsAtTheSamePosition() throws {
+        // 同じ位置が2つあると、textIndexAtは後ろを拾うので前の方（"a"）は表示も編集もできなかった。
+        // 負の位置が0へ丸められて先頭0が2つになる形も同じ（Android 661b31b）
+        let clip = try decode(baseJSON(texts: [
+            ["startMs": -5, "text": "a"],
+            ["startMs": 0, "text": "b"],
+            ["startMs": 3_000, "text": "c"],
+            ["startMs": 3_000, "text": "d"]
+        ]))
+        #expect(clip.texts.map(\.startMs) == [0, 3_000])
+        #expect(clip.texts.map(\.text) == ["b", "d"])
+    }
+
+    @Test("尺より後ろの区切りは尺の中へ収める")
+    func pullsSegmentsBeyondTheClipLengthInside() throws {
+        // 尺（10秒）より後ろの位置は、どこへ置いても長さ0で表示されない。尺の位置へそろえておく
+        let clip = try decode(baseJSON(texts: [
+            ["startMs": 0, "text": "a"],
+            ["startMs": 4_000, "text": "b"],
+            ["startMs": 15_000, "text": "c"]
+        ]))
+        #expect(clip.texts.map(\.startMs) == [0, 4_000, 10_000])
+        #expect(clip.texts.map(\.text) == ["a", "b", "c"])
+    }
+
+    @Test("尺の位置に重なる区間は1つにまとめても、どの文言も捨てない")
+    func keepsAllTextOfSegmentsBeyondTheClipLength() throws {
+        // 尺へ丸めると同じ位置で重なる。空の文言は詰める（Android f173f12）
+        let clip = try decode(baseJSON(texts: [
+            ["startMs": 0, "text": "a"],
+            ["startMs": 10_000, "text": "b"],
+            ["startMs": 12_000, "text": ""],
+            ["startMs": 15_000, "text": "c"]
+        ]))
+        #expect(clip.texts.map(\.startMs) == [0, 10_000])
+        #expect(clip.texts.map(\.text) == ["a", "b\nc"])
     }
 
     @Test("区間が空なら既定の1件を入れる（0件だと書き出しから文字が消える）")

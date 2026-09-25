@@ -27,6 +27,8 @@ struct TextInputView: View {
                         Text("ひとこと")
                             .vlogFont(14, weight: .semibold)
                             .foregroundStyle(AppColors.onSurfaceVariant(colorScheme))
+                            // 読み上げの見出しにする（見出しで飛べる。Android f173f12）
+                            .accessibilityAddTraits(.isHeader)
                         if let clip = store.selectedClip, clip.texts.count > 1 {
                             Text("\(segmentIndex + 1)")
                                 .vlogFont(9, weight: .bold)
@@ -219,6 +221,10 @@ struct NativeTextView: UIViewRepresentable {
         tv.text = text
         tv.isScrollEnabled = true
         tv.textContainerInset = UIEdgeInsets(top: 8, left: 6, bottom: 8, right: 6)
+        // 何の欄かを読み上げに伝える。見出し（showHeader）を出さない配置もあり、名前が無いと
+        // 未入力のときは「テキストフィールド」としか読まれなかった。iOSでは名前を付けても、打った文字は
+        // 名前のあとに値として読まれる（Androidは名前を付けると文字の代わりに読まれるので、見出しで伝えている）
+        tv.accessibilityLabel = TextSegment.defaultText
 
         // 幅はUIKitがキーボードの幅へ合わせてくれるので、こちらで決めるのは高さだけでよい
         // （sizeToFitが標準の44ptを入れ、flexibleWidthで幅の変化に追従する）。

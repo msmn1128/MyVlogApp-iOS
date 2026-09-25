@@ -64,6 +64,14 @@ struct ContentView: View {
                         // ExportManager.resolveTitleTextが持つので、ここは素通しでよい
                         onConfirm: { customTitleText in
                             showTitleDialog = false
+                            // 書き出しボタン（canExport）で止めているのは、ダイアログを開くところまで。
+                            // 開いている間に読み込みが始まっていたら始めない。読み込みを終えた
+                            // タイムラインの入れ替えと書き出しが並んで走る（Android 661b31b）
+                            guard !store.clips.isEmpty else { return }
+                            guard !store.isImporting else {
+                                store.showMessage("動画を読み込み中です。終わってからもう一度お試しください")
+                                return
+                            }
                             exportManager.startExport(
                                 clips: store.clips, timelineMuted: store.timelineMuted,
                                 includeTitle: true, customTitleText: customTitleText

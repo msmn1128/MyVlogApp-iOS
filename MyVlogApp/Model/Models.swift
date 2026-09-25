@@ -30,15 +30,50 @@ nonisolated struct TextSegment: Codable, Equatable, Hashable {
     ///
     /// 負の位置は0へ丸めてから並べる。下で直すのは先頭の1件だけなので、負の位置が2件以上あると
     /// 2件目以降が0より前に残り、昇順が崩れていた（[-5, -3, 1000] → [0, -3, 1000]。Android cd569d5）
-    static func normalized(_ segments: [TextSegment]) -> [TextSegment] {
-        guard !segments.isEmpty else { return [TextSegment()] }
-        let sorted = segments
-            .map { TextSegment(startMs: max(0, $0.startMs), text: $0.text) }
-            .sorted { $0.startMs < $1.startMs }
-        guard let first = sorted.first, first.startMs != 0 else { return sorted }
+    ///
+    /// 尺より後ろの位置は尺へ丸める。はみ出した区切りが残ると、区間ごと移動で後ろへずらせる量
+    /// （clampTimelineShift）が0になり、範囲ごと後ろへ動かせなくなっていた（Android 661b31b）
+    ///
+    /// - Parameter durationMs: 動画の尺。区切りをこの中へ収める（0以下なら尺が分からないので収めない）
+    static func normalized(_ segments: [TextSegment], durationMs: Int64) -> [TextSegment] {
+        let maxStartMs = durationMs > 0 ? durationMs : Int64.max
+        // 同じ位置どうしの元の並びを保つため、安定な並べ替えにする（sortedは安定とは限らない）
+        let sorted = segments.enumerated()
+            .map { (offset: $0.offset,
+                    segment: TextSegment(startMs: min(max(0, $0.element.startMs), maxStartMs),
+                                         text: $0.element.text)) }
+            .sorted { ($0.segment.startMs, $0.offset) < ($1.segment.startMs, $1.offset) }
+            .map(\.segment)
+
+        // 尺の位置（尺より後ろから丸めたものを含む）の区間は、どれも長さ0で表示も書き出しもされない。
+        // 丸めた結果が同じ位置で重なるので、1つにまとめて文言は改行でつなぐ（どれかを捨てると、
+        // 読み上げの操作で区切りを手前へ引き戻せば出せた文言まで消えてしまう。Android f173f12）
+        let inside = durationMs > 0 ? sorted.filter { $0.startMs < durationMs } : sorted
+        let atEnd = durationMs > 0 ? sorted.filter { $0.startMs >= durationMs } : []
+        let end = atEnd.isEmpty ? nil : TextSegment(
+            startMs: durationMs,
+            text: atEnd.map(\.text).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .joined(separator: "\n")
+        )
+
+        // 同じ位置の区間は1つにまとめ、後ろの方を残す。textIndexAtは同じ位置なら後ろを拾うので、
+        // 前の方は表示も編集もできないまま残っていた（先頭0が2つだと、区切りとして外すこともできない）。
+        // 残すのは、それまで画面に出ていた方（Android 661b31b）
+        var merged: [TextSegment] = []
+        for segment in inside {
+            if let last = merged.last, last.startMs == segment.startMs {
+                merged[merged.count - 1] = segment
+            } else {
+                merged.append(segment)
+            }
+        }
+        if let end { merged.append(end) }
+
+        guard let first = merged.first else { return [TextSegment()] }
+        guard first.startMs != 0 else { return merged }
         var head = first
         head.startMs = 0
-        return [head] + sorted.dropFirst()
+        return [head] + merged.dropFirst()
     }
 }
 
@@ -131,11 +166,6 @@ nonisolated struct VlogClip: Identifiable, Codable, Equatable {
         // そのクリップは重複判定の対象外になるだけで従来どおり動く
         contentKey       = try c.decodeIfPresent(String.self, forKey: .contentKey)
 
-        // ひとことは「必ず1件以上・先頭は0・昇順」へ揃えてから入れる。この不変条件が崩れていると
-        // textIndexAt/visibleTextSpansが拾えない区間を作り、書き出しから文字が消える
-        // （Android: VlogClip.fromJson → readTextSegments）
-        texts = TextSegment.normalized(try c.decode([TextSegment].self, forKey: .texts))
-
         // トリム位置は「0 <= start <= end <= 尺」へ正規化してから入れる。保存データが壊れていて
         // end < start のままだと、範囲を前提にしている計算（トリム幅・波形の描画範囲）が
         // 一斉におかしくなる。読めた値は活かしつつ、前後が入れ替わっている分だけを直す
@@ -147,6 +177,12 @@ nonisolated struct VlogClip: Identifiable, Codable, Equatable {
         durationMs = duration
         startMs    = min(max(decodedStart, 0), duration)
         endMs      = min(max(decodedEnd, startMs), duration)
+
+        // ひとことは「必ず1件以上・先頭は0・昇順・同じ位置は1つ・尺の中」へ揃えてから入れる。
+        // この不変条件が崩れていると textIndexAt/visibleTextSpans が拾えない区間を作り、
+        // 書き出しから文字が消える（Android: VlogClip.fromJson → readTextSegments）。
+        // 尺の中へ収めるので、尺を読んだあとで揃える
+        texts = TextSegment.normalized(try c.decode([TextSegment].self, forKey: .texts), durationMs: duration)
     }
 
     init(

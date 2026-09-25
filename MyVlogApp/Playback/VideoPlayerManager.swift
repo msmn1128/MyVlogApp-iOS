@@ -285,6 +285,7 @@ final class VideoPlayerManager {
         let tolerance = isInteractiveSeeking ? CMTime(value: 1, timescale: 10) : .zero
         player.seek(to: t, toleranceBefore: tolerance, toleranceAfter: tolerance)
         currentTimeMs = ms
+        if isInteractiveSeeking { seekedDuringInteraction = true }
 
         // 終端より手前へ戻ったら、同じクリップでもまた終端を処理できるようにする
         // （もう一度再生して終わりまで来たときに、止まらず流れ続けてしまうのを防ぐ）
@@ -294,13 +295,29 @@ final class VideoPlayerManager {
     /// 波形ドラッグの開始時に呼ぶ。シークを近似にし、周期観測での上書きを止める
     func beginInteractiveSeek() {
         isInteractiveSeeking = true
+        seekedDuringInteraction = false
     }
 
-    /// 波形ドラッグの終了時に呼ぶ。シークを正確な設定へ戻し、最後に一度だけ合わせ直す
+    /// 波形ドラッグの終了時に呼ぶ。シークを正確な設定へ戻し、最後に一度だけ合わせ直す。
+    ///
+    /// 触っている間に位置を動かしていなければ、合わせ直さずにプレイヤーのいまの位置を取り込む。
+    /// 触っている間は周期観測が`currentTimeMs`を更新しないので、いつも合わせ直すと、
+    /// 触れる前の古い位置へシークし直して、触れていた時間ぶん巻き戻る
+    /// （Android 661b31b。Androidでは本体の長押しで0.5秒以上戻っていた。iOSは掴んだ時点で
+    /// 止めるので戻るのは周期観測の間隔ぶんだけだが、同じ形にしておく）
     func endInteractiveSeek() {
         isInteractiveSeeking = false
-        seek(to: currentTimeMs)
+        if seekedDuringInteraction {
+            seek(to: currentTimeMs)
+        } else if player.currentItem != nil {
+            let time = player.currentTime()
+            if time.isNumeric && time.seconds.isFinite { currentTimeMs = Int64(time.seconds * 1000) }
+        }
+        seekedDuringInteraction = false
     }
+
+    /// 波形の操作中（beginInteractiveSeek〜endInteractiveSeek）に、位置を動かしたか
+    @ObservationIgnored private var seekedDuringInteraction = false
 
     /// トリム範囲が変わったことを再生側へ反映する。
     ///
