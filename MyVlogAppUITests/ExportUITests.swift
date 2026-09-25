@@ -119,4 +119,40 @@ final class ExportUITests: XCTestCase {
         )
         attachScreenshot(app, name: "export_cancelled")
     }
+
+    /// 書き出し中は、タイルを長押ししてもミュートが切り替わらない。書き出しが終わればまた切り替えられる。
+    ///
+    /// 回帰テスト: 操作バーなどの編集は書き出し中に止めていたが、タイルの長押しだけは受け付けていた。
+    /// 書き出すのは押した時点の内容なので、切り替えても出来上がる動画には入らず、画面と食い違って見えていた
+    @MainActor
+    func testTileLongPressDoesNotMuteWhileExporting() throws {
+        // 長押しの間に書き出しが終わらないよう、クリップは長めにする（中止のテストと同じ理由）
+        let app = launchApp(clipCount: 1, clipSeconds: 30)
+        let tile = app.buttons["1本目のクリップ"].firstMatch
+        XCTAssertTrue(tile.waitForExistence(timeout: 20), "タイルが見つからない")
+
+        exportButton(in: app).tap()
+        let confirm = app.descendants(matching: .any)["confirmExport"].firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10), "タイトル作成ダイアログが出なかった")
+        confirm.tap()
+        XCTAssertTrue(exportProgress(in: app).waitForExistence(timeout: 20), "書き出しの進捗が出なかった")
+
+        tile.press(forDuration: 1.0)
+        XCTAssertNotEqual(tile.value as? String, "ミュート中", "書き出し中の長押しでミュートが切り替わった")
+
+        let cancel = app.descendants(matching: .any)["中止"].firstMatch
+        XCTAssertTrue(cancel.waitForExistence(timeout: 15), "中止ボタンが出なかった")
+        cancel.tap()
+        XCTAssertTrue(
+            app.staticTexts["書き出しを中止しました"].waitForExistence(timeout: 20),
+            "中止したことが通知されなかった"
+        )
+
+        // 書き出していなければ、長押しで切り替わる（上の確かめ方で、ミュート中を読めていることの裏付けも兼ねる）
+        tile.press(forDuration: 1.0)
+        XCTAssertTrue(
+            waitUntil(timeout: 3) { (tile.value as? String) == "ミュート中" },
+            "書き出していないときの長押しでミュートにならない"
+        )
+    }
 }

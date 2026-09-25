@@ -6,6 +6,7 @@ import Photos
 struct TimelineView: View {
     @Environment(VlogStore.self) private var store
     @Environment(VideoPlayerManager.self) private var playerManager
+    @Environment(ExportManager.self) private var exportManager
     @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
@@ -87,7 +88,11 @@ struct TimelineView: View {
                             // 選んだら止めて頭を出す（同じタイルを選び直したときも。Android: select）
                             .onTapGesture { playerManager.select(index: idx) }
                             // Android版ClipTile: タップ=選択、長押し=ミュート切替（combinedClickable）
+                            // 書き出し中はミュートを切り替えさせない（操作バーなど、ほかの編集と同じ）。書き出すのは
+                            // 押した時点の内容なので、切り替えても出来上がる動画には入らず、画面と食い違って見える
+                            // （Android: ClipTile の onLongClick = null）
                             .onLongPressGesture(minimumDuration: 0.5) {
+                                guard !exportManager.isExporting else { return }
                                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                                 store.toggleMute(at: idx)
                             }
@@ -100,14 +105,19 @@ struct TimelineView: View {
                                     ? "\(idx + 1)本目のクリップ。動画が見つかりません（移動・削除されたか、アクセス権限が取り消されています）"
                                     : "\(idx + 1)本目のクリップ"
                             )
+                            // ミュート中かも伝える。タイルの中のアイコンは、読み上げを1つにまとめた（combine）ラベルに
+                            // 上書きされて読まれず、VoiceOverではミュート中だと分からなかった（Android: アイコンの「ミュート中」）
+                            .accessibilityValue(clip.isMuted ? "ミュート中" : "")
                             .accessibilityAddTraits(
                                 idx == store.selectedIndex ? [.isButton, .isSelected] : [.isButton]
                             )
                             .accessibilityAction { playerManager.select(index: idx) }
-                            .accessibilityAction(named: clip.isMuted ? "ミュートを解除" : "ミュート") {
+                            .modifier(MuteAccessibilityAction(
+                                isMuted: clip.isMuted, enabled: !exportManager.isExporting
+                            ) {
                                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                                 store.toggleMute(at: idx)
-                            }
+                            })
                     }
                 }
                 .padding(.vertical, 6)
@@ -141,6 +151,21 @@ struct TimelineView: View {
     }
 
     private static let clipRowSpace = "clipRow"
+}
+
+/// 読み上げの「ミュート」の操作を、切り替えられるとき（書き出し中でないとき）だけ出す
+private struct MuteAccessibilityAction: ViewModifier {
+    let isMuted: Bool
+    let enabled: Bool
+    let action: () -> Void
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content.accessibilityAction(named: isMuted ? "ミュートを解除" : "ミュート", action)
+        } else {
+            content
+        }
+    }
 }
 
 /// タイルの位置の入れ物。@Observableにしない（書き換えても画面を描き直さない）のが要点
