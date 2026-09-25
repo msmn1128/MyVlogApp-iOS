@@ -61,7 +61,8 @@ struct PreviewView: View {
                 }
             }
             .animation(.default, value: playerManager.isLoading)
-            // 折り返さないひとことがキャンバスの外へはみ出して、周りの画面に重ならないよう切る
+            // 描いた文字がキャンバスの外へはみ出して、周りの画面に重ならないよう切る
+            // （ひとことは折り返すのでふつうははみ出さないが、描く側の決まりに頼らない）
             .clipped()
         }
     }
@@ -145,7 +146,7 @@ private struct PreviewCaptionLayer: View {
     /// ひとこと。書き出しと同じ描画関数（CaptionRenderer）で描くので、位置・大きさ・絵文字の出方が
     /// 書き出した動画と一致する。以前はSwiftUIのTextで描いていて、絵文字や他のフォントで補った字が
     /// 入ると行の高さが変わり、行ごと上下へずれていた（書き出し側もずれ方が違った）。
-    /// 折り返さず、キャンバスより長い行は書き出しと同じく左右へ均等にはみ出す（外は親で切る）
+    /// 長い行は、書き出しと同じ位置で折り返す（CaptionRenderer.wrappedHitokotoLines）
     private func hitokotoOverlay(text: String) -> some View {
         HitokotoCanvas(text: text, scale: scale)
             .frame(width: canvas.width, height: canvas.height)
