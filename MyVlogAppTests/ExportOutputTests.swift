@@ -135,6 +135,39 @@ struct ExportOutputTests {
         #expect(yellow > 200, "絵文字がカラーで出ていない（黄色い画素 \(yellow)）")
     }
 
+    @Test("ひとことを区切ったクリップは、区間ごとにその区間の文字が焼き込まれる")
+    func eachSegmentShowsItsOwnHitokoto() async throws {
+        // 回帰テスト: キャプションの画像は、いまの区間の1枚だけを持ち、区間が変わったときに描き直す
+        // （全区間ぶんを先に作ると1枚約8MBずつ抱えるため。ExportWorker+Drawing の CaptionOverlays）。
+        // 描き直しを忘れると、前の区間の文字が次の区間にも残る。空の区間を挟んで同じ文字へ戻る形にして、
+        // 「変わったら描き直す」「戻ったときも描き直す」の両方を見る
+        let source = try await TestVideoFactory.makeSolidColorVideo(seconds: 2)
+        var clip = makeClip(source: source, endMs: 2_000)
+        clip.durationMs = 2_000
+        clip.texts = [
+            TextSegment(startMs: 0, text: "😀"),
+            TextSegment(startMs: 700, text: ""),
+            TextSegment(startMs: 1_400, text: "😀")
+        ]
+        let output = try await ExportRunner().processClip(clip, silent: true)
+        defer { TestVideoFactory.remove(source, output) }
+
+        func yellow(atSeconds seconds: Double) async throws -> Int {
+            let frame = try await FrameInspector.frame(of: output, atSeconds: seconds)
+            return FrameInspector.pixelCount(frame, in: Region.hitokoto) { r, g, b in r > 180 && g > 140 && b < 90 }
+        }
+        #expect(try await yellow(atSeconds: 0.3) > 200, "1つ目の区間に絵文字が出ていない")
+        #expect(try await yellow(atSeconds: 1.0) == 0, "空の区間に、前の区間の絵文字が残っている")
+        #expect(try await yellow(atSeconds: 1.7) > 200, "3つ目の区間に絵文字が出ていない")
+
+        // 撮影時刻は、ひとことが空の区間でも出る
+        let emptySpanFrame = try await FrameInspector.frame(of: output, atSeconds: 1.0)
+        #expect(
+            FrameInspector.brightPixelCount(emptySpanFrame, in: Region.timestamp) > 0,
+            "ひとことが空の区間で撮影時刻が消えている"
+        )
+    }
+
     @Test("長いひとことは2行に折り返して焼き込まれ、撮影時刻に重ならない")
     func longHitokotoIsWrappedInTheExport() async throws {
         // 折り返さなかった頃は、長いひとことが右端の撮影時刻に重なり、さらに長いと画面の外で切れていた。

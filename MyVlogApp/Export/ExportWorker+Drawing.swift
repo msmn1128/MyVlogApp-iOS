@@ -59,38 +59,55 @@ extension ExportWorker {
         return pb
     }
 
-    /// 1クリップぶんのキャプション画像をあらかじめ作っておくもの。
+    /// 1クリップぶんのキャプション画像（ひとこと＋撮影時刻を描いた透明な1920x1080）を、区間ごとに出すもの。
     ///
     /// 描く内容は「その時点のひとこと」と「撮影時刻」だけで、**ひとことの区間内では
-    /// どのフレームでも同一**。以前はフレームごとに`UIGraphicsImageRenderer`を作って
-    /// 1920x1080を描き起こしており、30fpsのクリップでは秒間30回まるごと描き直していた。
-    /// 区間ごとに1枚だけ作って使い回す（10秒のクリップなら300回 → 区間数ぶんに減る）。
-    struct CaptionOverlays {
-        /// 区間の添字 → その区間で重ねる画像。ひとことが空の区間はnil（時刻だけの画像を使う）
-        fileprivate let bySpan: [CGImage?]
-        /// どの区間にも当たらない位置（区間の隙間）で使う、撮影時刻だけの画像
-        fileprivate let timeOnly: CGImage?
+    /// どのフレームでも同一**。フレームごとに描き起こすと秒間30回まるごと描き直すことになるので、
+    /// 区間ごとに1枚だけ作って使い回す。
+    ///
+    /// 持つのは、いま使っている区間の1枚だけ。以前は全区間ぶんを書き出しの前にまとめて作っていたが、
+    /// 1枚が約8MB（1920x1080の32bit）あり、区間が10なら約80MB、細かく区切った長いクリップでは
+    /// 数百MBを抱えていた（Android が全画面ではなく帯の画像にしているのも同じ理由）。
+    /// コマは時間の順に読むので、区間が変わったときに描き直すだけで済む。
+    nonisolated struct CaptionOverlays {
+        fileprivate let canvas: CGSize
         fileprivate let spans: [(spanStart: Int64, spanEnd: Int64, text: String)]
+        fileprivate let timeText: String
+        /// いま持っている画像がどの区間のものか（nil＝区間の隙間で使う、撮影時刻だけの画像）。
+        /// 外側のOptionalがnilなら、まだ何も作っていない
+        private var cachedSpan: Int?? = .none
+        private var cachedImage: CGImage?
+
+        init(canvas: CGSize, spans: [(spanStart: Int64, spanEnd: Int64, text: String)], timeText: String) {
+            self.canvas = canvas
+            self.spans = spans
+            self.timeText = timeText
+        }
+
+        /// `positionMs`（トリム開始からの位置）に重ねる画像。区間が変わったときだけ描き直す
+        fileprivate mutating func image(at positionMs: Int64) -> CGImage? {
+            let index = spans.firstIndex { positionMs >= $0.spanStart && positionMs < $0.spanEnd }
+            if let cachedSpan, cachedSpan == index { return cachedImage }
+            let text = index.map { spans[$0].text }
+            let (canvas, timeText) = (canvas, timeText)
+            cachedImage = ExportWorker.renderOverlay(canvas: canvas) { context in
+                if let text { CaptionRenderer.drawHitokoto(text, canvas: canvas, scale: 1, in: context) }
+                ExportWorker.drawTimestamp(timeText, canvas: canvas)
+            }
+            cachedSpan = .some(index)
+            return cachedImage
+        }
     }
 
-    /// クリップの全区間ぶんのキャプション画像を先に作る（`renderClipVideoWithText`のループの外で1回）
+    /// 1クリップぶんのキャプション画像の出し分けを用意する（`renderClipVideoWithText`のループの外で1回）
     func makeCaptionOverlays(
         canvas: CGSize, spans: [(spanStart: Int64, spanEnd: Int64, text: String)], timeText: String
     ) -> CaptionOverlays {
-        CaptionOverlays(
-            bySpan: spans.map { span in
-                renderOverlay(canvas: canvas) { context in
-                    CaptionRenderer.drawHitokoto(span.text, canvas: canvas, scale: 1, in: context)
-                    drawTimestamp(timeText, canvas: canvas)
-                }
-            },
-            timeOnly: renderOverlay(canvas: canvas) { _ in drawTimestamp(timeText, canvas: canvas) },
-            spans: spans
-        )
+        CaptionOverlays(canvas: canvas, spans: spans, timeText: timeText)
     }
 
     /// 透明背景のオーバーレイ画像を1枚作る
-    private func renderOverlay(canvas: CGSize, draw: (CGContext) -> Void) -> CGImage? {
+    fileprivate nonisolated static func renderOverlay(canvas: CGSize, draw: (CGContext) -> Void) -> CGImage? {
         let format = UIGraphicsImageRendererFormat()
         format.opaque = false
         format.scale  = 1
@@ -109,7 +126,7 @@ extension ExportWorker {
     /// 写してから重ねるので、キャプションが無い位置（区間の隙間）でも必ず写しは行う。
     func composeFrame(
         source: CVPixelBuffer, destination: CVPixelBuffer, canvas: CGSize,
-        positionMs: Int64, overlays: CaptionOverlays
+        positionMs: Int64, overlays: inout CaptionOverlays
     ) {
         CVPixelBufferLockBaseAddress(source, .readOnly)
         CVPixelBufferLockBaseAddress(destination, [])
@@ -120,9 +137,8 @@ extension ExportWorker {
 
         copyPixels(from: source, to: destination)
 
-        // 作り置きの中から、この位置に出す1枚を選ぶだけ
-        let index = overlays.spans.firstIndex { positionMs >= $0.spanStart && positionMs < $0.spanEnd }
-        guard let overlay = index.map({ overlays.bySpan[$0] }) ?? overlays.timeOnly else { return }
+        // この位置に出す1枚（区間が変わったときだけ描き直す）
+        guard let overlay = overlays.image(at: positionMs) else { return }
 
         guard let ctx = CGContext(
             data: CVPixelBufferGetBaseAddress(destination),
@@ -159,7 +175,7 @@ extension ExportWorker {
     }
 
     /// 撮影時刻：上下中央・キャンバス右端基準（Android: TIME_FONT_PT / TIME_MARGIN_PT）
-    private func drawTimestamp(_ text: String, canvas: CGSize) {
+    fileprivate nonisolated static func drawTimestamp(_ text: String, canvas: CGSize) {
         let font = UIFont(name: VlogFonts.timeFontName, size: VlogLayout.timestampFontSize)
             ?? UIFont.monospacedSystemFont(ofSize: VlogLayout.timestampFontSize, weight: .medium)
         let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: UIColor.white]

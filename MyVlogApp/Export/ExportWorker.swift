@@ -101,9 +101,9 @@ actor ExportWorker {
         }
         writer.startSession(atSourceTime: .zero)
 
-        // キャプション画像は区間ごとに1枚だけ作ってループの外に置く。
+        // キャプション画像は区間ごとに1枚だけ作って使い回す（持つのはいまの区間の1枚だけ。CaptionOverlays）。
         // 中身は区間内のどのフレームでも同じなので、毎フレーム描き起こす必要がない
-        let overlays = makeCaptionOverlays(
+        var overlays = makeCaptionOverlays(
             canvas: canvas,
             spans: clip.visibleTextSpans(),   // trimStart起点の相対区間
             timeText: clip.timeText
@@ -132,7 +132,7 @@ actor ExportWorker {
                 }
                 composeFrame(
                     source: srcBuffer, destination: destBuffer, canvas: canvas,
-                    positionMs: relativeMs, overlays: overlays
+                    positionMs: relativeMs, overlays: &overlays
                 )
                 // 書き込めなかったら（途中で空き容量が尽きたなど）、その場で止める。書き手は失敗したあとも
                 // 「受け取れる」と答え続けるので、結果を見ないと残りのコマを全部読んで合成してから、
