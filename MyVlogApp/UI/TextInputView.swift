@@ -288,9 +288,11 @@ struct NativeTextView: UIViewRepresentable {
 /// 実機（特にiPad）で「1回目タップでキーボードが開かない」症状を引き起こすが、
 /// touchesBegan時点では既にhitTestがこのビューを選択しているため、ここで
 /// becomeFirstResponder()を呼べば確実かつ即座にキーボードが表示される。
-final class EagerFirstResponderTextView: UITextView, UIGestureRecognizerDelegate {
+final class EagerFirstResponderTextView: UITextView {
     /// いまのタップで、カーソルを文字の終わりへ置き直すか（理由は handleTap）
     private var moveCaretToEndAfterTap = false
+    /// 下の tap のdelegate。認識器はdelegateを弱く持つので、ここで持っておく
+    private let simultaneousDelegate = SimultaneousGestureDelegate()
 
     override init(frame: CGRect, textContainer: NSTextContainer?) {
         super.init(frame: frame, textContainer: textContainer)
@@ -306,18 +308,15 @@ final class EagerFirstResponderTextView: UITextView, UIGestureRecognizerDelegate
         // 妨げないよう、同時に認識させ、タッチも横取りしない
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
         tap.cancelsTouchesInView = false
-        tap.delegate = self
+        // delegateをこのビュー自身にしない。UIScrollViewは自分のパン認識器のdelegateを自分にしているので、
+        // ここで同時認識をtrueにすると、入力欄のスクロールまで外側の画面と一緒に動くようになる
+        tap.delegate = simultaneousDelegate
         addGestureRecognizer(tap)
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
     }
-
-    func gestureRecognizer(
-        _ gestureRecognizer: UIGestureRecognizer,
-        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
-    ) -> Bool { true }
 
     /// 入力を始めるタップと、入力中に文字の下の空いている所をタップしたときは、カーソルを文字の終わりに置く。
     ///
@@ -364,4 +363,12 @@ private final class TouchDownRecognizer: UIGestureRecognizer {
         if let touch = touches.first, let view { onTouchDown(touch.location(in: view)) }
         state = .failed
     }
+}
+
+/// ほかの認識器と同時に認識させるだけのdelegate（EagerFirstResponderTextView のカーソル置き直しのタップ用）
+private final class SimultaneousGestureDelegate: NSObject, UIGestureRecognizerDelegate {
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool { true }
 }

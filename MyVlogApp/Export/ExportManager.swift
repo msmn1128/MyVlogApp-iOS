@@ -201,7 +201,10 @@ final class ExportManager {
             notifyCompletion(title: "書き出し完了", body: savedMessage)
             showMessage(savedMessage)
             succeeded = true
-        } catch is CancellationError {
+        } catch where error is CancellationError || Task.isCancelled {
+            // 中止したときに投げられるのはCancellationErrorとは限らない。AVAssetExportSessionや
+            // 写真への保存は、途中で止められると自分のエラー（「操作は中止されました」など）を投げる。
+            // 見ていなかった頃は、中止しただけなのに「書き出しに失敗しました」と出て、失敗の通知まで届いていた
             update("")
             showMessage("書き出しを中止しました")
         } catch {

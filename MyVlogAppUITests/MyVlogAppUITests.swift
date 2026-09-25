@@ -172,7 +172,7 @@ final class MyVlogAppUITests: XCTestCase {
             app.buttons["keyboardDone"].tap()
             XCTAssertTrue(waitUntil(timeout: 3) { !app.keyboards.firstMatch.exists })
         }
-        XCTAssertEqual(textView.value as? String, "A1B2C3", "文字の下をタップして打った文字が終わりに入らない")
+        XCTAssertEqual(textView.value as? String, "A1B2C3", "入力を始めるタップのあとに打った文字が、終わりに入らない")
     }
 
     /// キーボードを出したまま「もとに戻す」を押すと、入力欄も戻り、続けて打っても戻した内容を打ち消さない。
